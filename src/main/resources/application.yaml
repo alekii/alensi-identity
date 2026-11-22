@@ -40,8 +40,12 @@ alensi:
     keycloak:
       base-url: ${KEYCLOAK_BASE_URL:http://localhost:8180}
       realm: ${KEYCLOAK_REALM:alensi}
-    # Usernames granted the alensi-identity "admin" role on all targets when first seen.
+    # Usernames granted the alensi-identity "platform-admin" role on all targets when first seen.
     bootstrap-admins: ${BOOTSTRAP_ADMINS:admin}
+    onboarding:
+      client-id: ${ONBOARDING_CLIENT_ID:alensi-web}
+      redirect-uri: ${ONBOARDING_REDIRECT_URI:http://localhost:3000/}
+      invite-lifespan: ${ONBOARDING_INVITE_LIFESPAN:72h}
 
 management:
   endpoints:

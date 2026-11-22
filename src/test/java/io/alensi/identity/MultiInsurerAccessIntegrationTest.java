@@ -1,7 +1,12 @@
 package io.alensi.identity;
 
 import static org.hamcrest.Matchers.contains;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -316,6 +321,60 @@ class MultiInsurerAccessIntegrationTest {
         ok(call(SID, delete("/api/users/aggie/grants/" + aggieGrant)));
     }
 
+    // ---- Staff onboarding ----
+
+    @Test
+    void managersOnboardStaffIntoTheirScope() throws Exception {
+        UUID ninaId = UUID.randomUUID();
+        KeycloakUser nina = new KeycloakUser(ninaId, "nina@jubilee.example", "nina@jubilee.example", "Nina", "Achieng",
+                true, List.of("UPDATE_PASSWORD"));
+        given(keycloak.findByEmail("nina@jubilee.example")).willReturn(Optional.empty());
+        given(keycloak.createUser(eq("nina@jubilee.example"), eq("Nina"), eq("Achieng"), eq("+254711000111"), anyList()))
+                .willReturn(nina);
+        given(keycloak.findById(ninaId)).willReturn(Optional.of(nina));
+
+        // Everything is authorized before anything is created in Keycloak.
+        denied(send(MARY, post("/api/tenants/JUB/staff"), staff("nina@jubilee.example", "agent", "JUB-KE-CEN-THK")));
+        denied(send(MARY, post("/api/tenants/JUB/staff"), """
+                {"email": "nina@jubilee.example", "firstName": "Nina", "lastName": "Achieng"}"""));
+        send(MARY, post("/api/tenants/JUB/staff"), staff("nina@jubilee.example", "agent", "MAD-KE-CST-MSA"))
+                .andExpect(status().isBadRequest());
+        verify(keycloak, never()).createUser(any(), any(), any(), any(), any());
+
+        // A branch manager onboards an agent into their team: account, membership, grant, invite.
+        send(MARY, post("/api/tenants/JUB/staff"), staff("nina@jubilee.example", "agent", "JUB-KE-NRB-NWS-T1"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.newAccount").value(true))
+                .andExpect(jsonPath("$.invited").value(true))
+                .andExpect(jsonPath("$.grants[0].role").value("agent"));
+        verify(keycloak).createUser(eq("nina@jubilee.example"), eq("Nina"), eq("Achieng"), eq("+254711000111"),
+                eq(List.of("UPDATE_PASSWORD", "VERIFY_EMAIL")));
+        verify(keycloak).sendActionsEmail(eq(ninaId), eq(List.of("UPDATE_PASSWORD")), any(), eq("alensi-web"), any());
+        call(JUB_ADMIN, get("/api/tenants/JUB/members"))
+                .andExpect(jsonPath("$[?(@.username == 'nina@jubilee.example')]").isNotEmpty());
+        call(MARY, get("/api/users/nina@jubilee.example/applications/alensi-insure/permissions/policies.sell/targets/JUB-KE-NRB-NWS-T1"))
+                .andExpect(jsonPath("$.allowed").value(true));
+
+        // Someone who already works for Madison keeps their one account: no new account, no invite.
+        given(keycloak.findByEmail("musa@alensi.local")).willReturn(Optional.of(MOMBASA));
+        send(MARY, post("/api/tenants/JUB/staff"), staff("musa@alensi.local", "agent", "JUB-KE-NRB-NWS-T1"))
+                .andExpect(jsonPath("$.newAccount").value(false))
+                .andExpect(jsonPath("$.invited").value(false));
+        // Onboarding again is harmless.
+        send(MARY, post("/api/tenants/JUB/staff"), staff("musa@alensi.local", "agent", "JUB-KE-NRB-NWS-T1"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.grants").isEmpty());
+        verify(keycloak, never()).createUser(eq("musa@alensi.local"), any(), any(), any(), any());
+
+        // Invites can be re-sent only while the account is not set up yet.
+        call(MARY, post("/api/tenants/JUB/staff/nina@jubilee.example/invite")).andExpect(status().isAccepted());
+        call(MARY, post("/api/tenants/JUB/staff/musa/invite")).andExpect(status().isConflict());
+
+        given(keycloak.findByEmail("mary@alensi.local")).willReturn(Optional.of(MARY));
+        send(MARY, post("/api/tenants/JUB/staff"), staff("mary@alensi.local", "agent", "JUB-KE-NRB-NWS-T1"))
+                .andExpect(status().isBadRequest());
+    }
+
     // ---- One person, two tenants ----
 
     @Test
@@ -460,6 +519,12 @@ class MultiInsurerAccessIntegrationTest {
         send(JUB_ADMIN, put("/api/applications/alensi-insure/roles/claims-officer/limits?tenant=JUB"), """
                 {"limits": [{"permission": "claims.view", "currency": "KES", "maxAmount": 1}]}""")
                 .andExpect(status().isBadRequest());
+    }
+
+    private static String staff(String email, String role, String target) {
+        return """
+                {"email": "%s", "firstName": "Nina", "lastName": "Achieng", "phoneNumber": "+254711000111",
+                 "grants": [{"application": "alensi-insure", "role": "%s", "target": "%s"}]}""".formatted(email, role, target);
     }
 
     private void tenantType(String code, String parent) throws Exception {

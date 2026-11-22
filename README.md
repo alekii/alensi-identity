@@ -33,7 +33,7 @@ This project is focused entirely on security and explores how to build reliable 
 
 | Component | Responsibility |
 |---|---|
-| **Keycloak 26.8** (realm `alensi`) | Authentication: passwords, MFA, passkeys, social/enterprise login, sessions. One **Organization per tenant**. Issues **lightweight access tokens** carrying only `iss`, `sub`, `aud`, `azp`, `sid`, `exp`, plus `organization` when a tenant is selected (`scope=organization:<alias>`). No roles or profile data. |
+| **Keycloak 26.8** (realm `alensi`) | Authentication: password or Sign in with Google, then **mandatory MFA** (authenticator app, SMS code or email code; see [docs/authentication.md](docs/authentication.md)), sessions. One **Organization per tenant**. Issues **lightweight access tokens** carrying only `iss`, `sub`, `aud`, `azp`, `sid`, `exp`, plus `organization` when a tenant is selected (`scope=organization:<alias>`). No roles or profile data. |
 | **alensi-identity** (this service) | Authorization: users, applications, permissions, roles, the target hierarchy and grants. Verifies tokens locally against the realm JWKS. |
 | **Postgres** | ACL data (`alensi_identity` database) and Keycloak's own database. |
 
@@ -80,6 +80,8 @@ Platform admins can add further admin levels, e.g. `team-admin`. See [docs/acces
 | GET/POST | `/api/tenants/{tenant}/members` | Members (tenant admins) |
 | PUT/DELETE | `/api/tenants/{tenant}/members/{username}` | Suspend, reactivate or set expiry of a membership / remove it with all its grants |
 | GET | `/api/tenants/{tenant}/audit-events` | The tenant's audit trail (tenant admins) |
+| POST | `/api/tenants/{tenant}/staff` | Onboard a person: account (or reuse), membership, grants, invite email |
+| POST | `/api/tenants/{tenant}/staff/{username}/invite` | Re-send the invite while setup is pending |
 | GET | `/api/users/me` | Caller's profile |
 | GET | `/api/users/username/{username}`, `/api/users/id/{id}` | Profile (`identity.users.read`) |
 | PUT | `/api/users/username/{username}/access` | Suspend or reactivate a whole account across all tenants (platform-only) |
@@ -100,19 +102,21 @@ Errors are returned as RFC 9457 problem details.
 
 ## Running locally
 
-Requires Java 21 and Docker.
+Requires Java 21, Docker and Python 3.
 
 ```bash
-docker compose up -d          # Postgres on :5433, Keycloak on :8180 (admin console: admin/admin)
+./mvnw -f keycloak/extensions/pom.xml package   # Keycloak email/SMS code authenticators -> keycloak/providers
+docker compose up -d          # Postgres :5433, Keycloak :8180 (admin/admin), Mailpit :8025, then flows + MFA config
 ./mvnw spring-boot:run        # service on :8090
 ./mvnw test                   # unit tests + API tests on Testcontainers Postgres
 ```
 
-Development realm users: `admin/admin` (bootstrap admin) and `alice/alice`. Clients: `alensi-web` (public, PKCE, plus password grant for local testing only) and `alensi-demo-service` (client credentials).
+Development realm users: `admin/admin` (bootstrap platform admin) and `alice/alice`. Email (invites, codes) goes to Mailpit at http://localhost:8025. Dev SMS codes appear in the Keycloak log.
+
+Sign-in always needs a second factor, and `alensi-web` has no password grant. To get a token for local testing, `scripts/dev_login.py` does the browser flow and fetches the code from Mailpit or the log:
 
 ```bash
-TOKEN=$(curl -s http://localhost:8180/realms/alensi/protocol/openid-connect/token \
-  -d grant_type=password -d client_id=alensi-web -d username=admin -d password=admin | jq -r .access_token)
+TOKEN=$(python3 scripts/dev_login.py admin admin)            # add --org jub to pick a tenant
 curl -s localhost:8090/api/users/me -H "Authorization: Bearer $TOKEN"
 ```
 

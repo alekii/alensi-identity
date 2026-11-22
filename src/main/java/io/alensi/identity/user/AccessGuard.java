@@ -110,6 +110,11 @@ public class AccessGuard {
      */
     public void requireCanAssign(UserAccount caller, UserAccount subject, Role role, String targetCode) {
         requireNotSelf(caller, subject);
+        requireCanAssign(caller, role, targetCode);
+    }
+
+    /** As above, before the grantee exists (e.g. checking an onboarding request before creating the account). */
+    public void requireCanAssign(UserAccount caller, Role role, String targetCode) {
         PermissionEvaluator evaluator = evaluator(caller);
         TargetNode target = targetCode == null ? null : evaluator.requireTarget(targetCode);
         if (!canAssign(evaluator, management(caller), role, target)) {

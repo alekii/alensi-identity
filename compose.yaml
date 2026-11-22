@@ -29,13 +29,43 @@ services:
       KC_DB_USERNAME: alensi
       KC_DB_PASSWORD: alensi
       KC_HEALTH_ENABLED: "true"
+      # SMS codes: "log" writes them to this container's log (development only).
+      # Production: africastalking (ALENSI_SMS_AT_*) or twilio (ALENSI_SMS_TWILIO_*).
+      ALENSI_SMS_PROVIDER: ${ALENSI_SMS_PROVIDER:-log}
     ports:
       - "8180:8080"
     volumes:
       - ./keycloak/import:/opt/keycloak/data/import:ro
+      # Built by: ./mvnw -f keycloak/extensions/pom.xml package
+      - ./keycloak/providers:/opt/keycloak/providers:ro
     depends_on:
       postgres:
         condition: service_healthy
+      mailpit:
+        condition: service_started
+
+  # Applies flows (mandatory MFA), user profile and Sign in with Google once Keycloak is up.
+  keycloak-config:
+    image: python:3.13-alpine3.21
+    command: ["python", "/config/configure.py"]
+    environment:
+      KC_URL: http://keycloak:8080
+      KC_REALM: alensi
+      KC_ADMIN_USER: admin
+      KC_ADMIN_PASSWORD: admin
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+    volumes:
+      - ./keycloak/configure.py:/config/configure.py:ro
+    depends_on:
+      - keycloak
+    restart: "no"
+
+  # Catches all email in development (invites, verification codes). UI: http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:v1.21.8
+    ports:
+      - "8025:8025"
 
 volumes:
   postgres-data:
