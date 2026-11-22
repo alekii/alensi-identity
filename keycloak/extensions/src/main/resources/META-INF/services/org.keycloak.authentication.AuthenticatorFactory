@@ -1,0 +1,2 @@
+io.alensi.keycloak.otp.EmailCodeAuthenticatorFactory
+io.alensi.keycloak.otp.SmsCodeAuthenticatorFactory

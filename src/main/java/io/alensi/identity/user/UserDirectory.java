@@ -74,6 +74,12 @@ public class UserDirectory {
         return users.findById(id).orElseThrow(() -> new NotFoundException("User '%s' not found".formatted(id)));
     }
 
+    /** The local account for a Keycloak user, provisioned if this is the first time we see them. */
+    @Transactional
+    public UserAccount findOrProvision(KeycloakUser source) {
+        return users.findById(source.id()).orElseGet(() -> provision(source));
+    }
+
     private UserAccount provision(KeycloakUser source) {
         UserAccount user = users.findById(source.id())
                 .orElseGet(() -> new UserAccount(source.id(), source.username(), source.email(), source.displayName()));

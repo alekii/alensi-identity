@@ -6,6 +6,7 @@ import java.util.Collection;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
@@ -192,6 +193,13 @@ public class AclAdminService {
      */
     public AclViews.GrantView grant(UserAccount actor, UserAccount user, String applicationCode, String roleCode,
             String targetCode) {
+        return grantIfAbsent(actor, user, applicationCode, roleCode, targetCode)
+                .orElseThrow(() -> new ConflictException("Grant already exists"));
+    }
+
+    /** As {@link #grant}, but an identical existing grant is not an error: returns empty instead. */
+    public Optional<AclViews.GrantView> grantIfAbsent(UserAccount actor, UserAccount user, String applicationCode,
+            String roleCode, String targetCode) {
         Target target = targetCode == null ? null : target(targetCode);
         Role role = roleForGrant(application(applicationCode), roleCode, target);
         access.requireCanAssign(actor, user, role, targetCode);
@@ -199,7 +207,7 @@ public class AclAdminService {
                 ? grants.existsByUserAndRoleAndTargetIsNull(user, role)
                 : grants.existsByUserAndRoleAndTarget(user, role, target);
         if (exists) {
-            throw new ConflictException("Grant already exists");
+            return Optional.empty();
         }
         if (target != null) {
             tenants.ensureMember(actor, target.getTenant(), user);
@@ -207,7 +215,20 @@ public class AclAdminService {
         RoleGrant grant = grants.save(new RoleGrant(user, role, target, actor.getId()));
         audit.record(actor.getId(), grant.getTenant(), "grant.created", user.getUsername(),
                 "%s on %s".formatted(AclViews.RoleView.reference(role), targetCode == null ? "*" : targetCode));
-        return AclViews.GrantView.of(grant);
+        return Optional.of(AclViews.GrantView.of(grant));
+    }
+
+    /**
+     * Checks, without a grantee, that the actor may grant the role on a target in the tenant. Used to
+     * authorize onboarding completely before anything is created in Keycloak.
+     */
+    @Transactional(readOnly = true)
+    public void checkGrant(UserAccount actor, Tenant tenant, String applicationCode, String roleCode, String targetCode) {
+        Target target = target(targetCode);
+        if (!target.getTenant().getId().equals(tenant.getId())) {
+            throw new BadRequestException("Target '%s' is not in tenant '%s'".formatted(targetCode, tenant.getCode()));
+        }
+        access.requireCanAssign(actor, roleForGrant(application(applicationCode), roleCode, target), targetCode);
     }
 
     public void revoke(UserAccount actor, UserAccount user, long grantId) {

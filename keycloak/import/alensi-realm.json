@@ -37,13 +37,13 @@
     {
       "clientId": "alensi-web",
       "name": "Alensi Web",
-      "description": "Browser clients. Authorization Code + PKCE. Direct access grants are enabled for local testing only.",
+      "description": "Browser clients. Authorization Code + PKCE only: the password grant would bypass MFA.",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": true,
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
-      "directAccessGrantsEnabled": true,
+      "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "redirectUris": [
         "http://localhost:3000/*"
@@ -213,5 +213,15 @@
       "serviceAccountClientId": "alensi-demo-service"
     }
   ],
-  "organizationsEnabled": true
+  "organizationsEnabled": true,
+  "smtpServer": {
+    "host": "${SMTP_HOST:mailpit}",
+    "port": "${SMTP_PORT:1025}",
+    "from": "${SMTP_FROM:no-reply@alensi.local}",
+    "fromDisplayName": "Alensi"
+  },
+  "otpPolicyType": "totp",
+  "otpPolicyAlgorithm": "HmacSHA1",
+  "otpPolicyDigits": 6,
+  "otpPolicyPeriod": 30
 }

@@ -1,6 +1,8 @@
 package io.alensi.identity.user;
 
 import java.net.URI;
+import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -22,6 +24,10 @@ import org.springframework.web.client.RestClient;
  */
 @Component
 public class KeycloakAdminClient {
+
+    public static final String UPDATE_PASSWORD = "UPDATE_PASSWORD";
+    public static final String VERIFY_EMAIL = "VERIFY_EMAIL";
+    public static final String CONFIGURE_TOTP = "CONFIGURE_TOTP";
 
     private static final String REGISTRATION_ID = "keycloak-admin";
 
@@ -61,6 +67,60 @@ public class KeycloakAdminClient {
                 .body(new ParameterizedTypeReference<>() {
                 });
         return users == null ? Optional.empty() : users.stream().findFirst();
+    }
+
+    public Optional<KeycloakUser> findByEmail(String email) {
+        List<KeycloakUser> users = restClient.get()
+                .uri(uri -> uri.path("/users").queryParam("email", email).queryParam("exact", true).build())
+                .retrieve()
+                .body(new ParameterizedTypeReference<>() {
+                });
+        return users == null ? Optional.empty() : users.stream().findFirst();
+    }
+
+    /** Creates an enabled account with no credentials yet; the user sets them up from the invite. */
+    public KeycloakUser createUser(String email, String firstName, String lastName, String phoneNumber,
+            List<String> requiredActions) {
+        Map<String, Object> representation = new LinkedHashMap<>();
+        representation.put("username", email);
+        representation.put("email", email);
+        representation.put("firstName", firstName);
+        representation.put("lastName", lastName);
+        representation.put("enabled", true);
+        representation.put("requiredActions", requiredActions);
+        if (phoneNumber != null) {
+            representation.put("attributes", Map.of("phoneNumber", List.of(phoneNumber)));
+        }
+        URI location = restClient.post()
+                .uri("/users")
+                .body(representation)
+                .retrieve()
+                .toBodilessEntity()
+                .getHeaders()
+                .getLocation();
+        if (location == null) {
+            throw new IllegalStateException("Keycloak did not return the new user");
+        }
+        String path = location.getPath();
+        return new KeycloakUser(UUID.fromString(path.substring(path.lastIndexOf('/') + 1)), email, email, firstName,
+                lastName, true, requiredActions);
+    }
+
+    /**
+     * Emails the user a link to complete {@code actions} (e.g. set a password), valid for
+     * {@code lifespan}, returning to {@code redirectUri} of {@code clientId} afterwards.
+     */
+    public void sendActionsEmail(UUID userId, List<String> actions, Duration lifespan, String clientId,
+            String redirectUri) {
+        restClient.put()
+                .uri(uri -> uri.path("/users/{id}/execute-actions-email")
+                        .queryParam("lifespan", lifespan.toSeconds())
+                        .queryParam("client_id", clientId)
+                        .queryParam("redirect_uri", redirectUri)
+                        .build(userId))
+                .body(actions)
+                .retrieve()
+                .toBodilessEntity();
     }
 
     /**
