@@ -1,5 +1,6 @@
 package io.alensi.identity.acl;
 
+import java.math.BigDecimal;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -26,10 +27,42 @@ public final class PermissionEvaluator {
 
     private final TargetTree tree;
     private final List<EffectiveGrant> grants;
+    private final Set<String> limitedPermissions;
 
     public PermissionEvaluator(TargetTree tree, List<EffectiveGrant> grants) {
+        this(tree, grants, Set.of());
+    }
+
+    public PermissionEvaluator(TargetTree tree, List<EffectiveGrant> grants, Set<String> limitedPermissions) {
         this.tree = tree;
         this.grants = List.copyOf(grants);
+        this.limitedPermissions = Set.copyOf(limitedPermissions);
+    }
+
+    public boolean isLimited(String permission) {
+        return limitedPermissions.contains(permission);
+    }
+
+    /**
+     * The best limit per currency for the permission on the target, across every grant that covers
+     * it. A currency missing from the result means no authority in that currency.
+     */
+    public List<Limit> limits(String permission, TargetNode target) {
+        List<TargetNode> covering = tree.ancestorsOrSelf(target);
+        Map<String, Limit> best = new TreeMap<>();
+        grants.stream()
+                .filter(grant -> grant.permissions().contains(permission))
+                .filter(grant -> grant.isWildcard() || covering.contains(grant.target()))
+                .flatMap(grant -> grant.limits().stream())
+                .filter(limit -> limit.permission().equals(permission))
+                .forEach(limit -> best.merge(limit.currency(), limit, Limit::max));
+        return List.copyOf(best.values());
+    }
+
+    /** True if the user holds the permission on the target with a limit covering the amount. */
+    public boolean hasPermission(String permission, TargetNode target, BigDecimal amount, String currency) {
+        return hasPermission(permission, target) && limits(permission, target).stream()
+                .anyMatch(limit -> limit.currency().equals(currency) && limit.allows(amount));
     }
 
     public Optional<TargetNode> findTarget(String code) {

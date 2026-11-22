@@ -8,12 +8,14 @@ import org.springframework.data.jpa.repository.Query;
 
 public interface RoleGrantRepository extends JpaRepository<RoleGrant, Long> {
 
+    /**
+     * Role collections (permissions, assignable roles, limits) are batch-loaded afterwards; fetch-joining
+     * all three here multiplies rows into a cartesian product.
+     */
     @Query("""
-            select distinct g from RoleGrant g
+            select g from RoleGrant g
               join fetch g.role r
               join fetch r.application a
-              left join fetch r.permissions
-              left join fetch r.assignableRoles
               left join fetch g.target
             where g.user = :user and a.code = :applicationCode
             """)
@@ -23,6 +25,7 @@ public interface RoleGrantRepository extends JpaRepository<RoleGrant, Long> {
             select g from RoleGrant g
               join fetch g.role r
               join fetch r.application
+              left join fetch r.owner
               left join fetch g.target
             where g.user = :user
             order by g.id

@@ -88,7 +88,7 @@ public class UserDirectory {
 
     private void grantBootstrapAdmin(UserAccount user) {
         var application = applications.findByCode(AccessGuard.APPLICATION).orElseThrow();
-        var admin = roles.findByApplicationAndCode(application, "platform-admin").orElseThrow();
+        var admin = roles.findByApplicationAndCodeAndOwnerIsNull(application, "platform-admin").orElseThrow();
         if (!grants.existsByUserAndRoleAndTargetIsNull(user, admin)) {
             grants.save(new RoleGrant(user, admin, null, null));
             audit.record(null, "grant.created", user.getUsername(), "bootstrap: alensi-identity/platform-admin on *");

@@ -61,6 +61,7 @@ class MultiInsurerAccessIntegrationTest {
     private static final KeycloakUser ANN = user("ann");            // agent in team 1
     private static final KeycloakUser THIKA = user("tom");          // Thika branch manager
     private static final KeycloakUser MOMBASA = user("musa");       // Madison Mombasa agent
+    private static final KeycloakUser HOC = user("hellen");         // Jubilee Kenya head of claims
 
     private static boolean seeded;
 
@@ -72,7 +73,7 @@ class MultiInsurerAccessIntegrationTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        for (KeycloakUser user : List.of(PLATFORM, JUB_ADMIN, MAD_ADMIN, CENTRAL, MARY, TINA, ANN, THIKA, MOMBASA)) {
+        for (KeycloakUser user : List.of(PLATFORM, JUB_ADMIN, MAD_ADMIN, CENTRAL, MARY, TINA, ANN, THIKA, MOMBASA, HOC)) {
             given(keycloak.findById(user.id())).willReturn(Optional.of(user));
             given(keycloak.findByUsername(user.username())).willReturn(Optional.of(user));
         }
@@ -88,17 +89,24 @@ class MultiInsurerAccessIntegrationTest {
                 {"code": "alensi-insure", "name": "Alensi Insure"}"""));
         for (String permission : List.of("policies.view", "policies.sell", "claims.view", "claims.approve",
                 "team.reports", "branch.reports")) {
-            ok(send(PLATFORM, post("/api/applications/alensi-insure/permissions"), "{\"code\": \"%s\"}".formatted(permission)));
+            ok(send(PLATFORM, post("/api/applications/alensi-insure/permissions"), "{\"code\": \"%s\", \"limited\": %s}"
+                    .formatted(permission, permission.equals("claims.approve"))));
         }
         // Agent ranks: agent < team-lead < branch-manager.
         role("alensi-insure", "agent", "policies.view", "policies.sell");
         role("alensi-insure", "team-lead", "policies.view", "policies.sell", "team.reports");
         role("alensi-insure", "branch-manager", "policies.view", "claims.view", "claims.approve", "team.reports", "branch.reports");
+        limits(PLATFORM, "branch-manager", null, """
+                {"permission": "claims.approve", "currency": "KES", "maxAmount": 1000000}""");
+        role("alensi-insure", "head-of-claims", "claims.view", "claims.approve");
+        limits(PLATFORM, "head-of-claims", null, """
+                {"permission": "claims.approve", "currency": "KES", "maxAmount": null}""");
         // An extra admin level so team leads can onboard agents into their own team.
         role("alensi-identity", "team-admin", "identity.users.manage", "identity.users.read", "identity.permissions.read");
 
         assignable("alensi-identity", "company-admin", "alensi-identity/regional-admin", "alensi-identity/branch-admin",
-                "alensi-identity/team-admin", "alensi-insure/branch-manager", "alensi-insure/team-lead", "alensi-insure/agent");
+                "alensi-identity/team-admin", "alensi-insure/branch-manager", "alensi-insure/team-lead", "alensi-insure/agent",
+                "alensi-insure/head-of-claims");
         assignable("alensi-identity", "regional-admin", "alensi-identity/branch-admin", "alensi-identity/team-admin",
                 "alensi-insure/branch-manager", "alensi-insure/team-lead", "alensi-insure/agent");
         assignable("alensi-identity", "branch-admin", "alensi-identity/team-admin", "alensi-insure/team-lead",
@@ -132,6 +140,7 @@ class MultiInsurerAccessIntegrationTest {
         grant(JUB_ADMIN, MARY, "alensi-identity", "branch-admin", "JUB-KE-NRB-NWS");
         grant(CENTRAL, THIKA, "alensi-insure", "branch-manager", "JUB-KE-CEN-THK");
         grant(MAD_ADMIN, MOMBASA, "alensi-insure", "agent", "MAD-KE-CST-MSA");
+        grant(JUB_ADMIN, HOC, "alensi-insure", "head-of-claims", "JUB-KE");
 
         // The branch manager opens a team and appoints a team lead, who onboards an agent.
         target(MARY, "JUB-KE-NRB-NWS-T1", "team", "JUB-KE-NRB-NWS");
@@ -233,6 +242,103 @@ class MultiInsurerAccessIntegrationTest {
         denied(call(TINA, delete("/api/users/tina/grants/" + grantId(call(TINA, get("/api/users/tina/grants"))))));
         ok(call(TINA, delete("/api/users/ann/grants/" + grantId)));
         grant(TINA, ANN, "alensi-insure", "agent", "JUB-KE-NRB-NWS-T1");
+    }
+
+    // ---- Per-insurer roles ----
+
+    @Test
+    void insurersDefineTheirOwnRolesWithTheSameCode() throws Exception {
+        ok(send(JUB_ADMIN, post("/api/applications/alensi-insure/roles"), """
+                {"code": "senior-agent", "name": "Senior agent", "owner": "JUB",
+                 "permissions": ["policies.view", "policies.sell", "team.reports"]}"""));
+        ok(send(MAD_ADMIN, post("/api/applications/alensi-insure/roles"), """
+                {"code": "senior-agent", "name": "Senior sales executive", "owner": "MAD",
+                 "permissions": ["policies.view", "policies.sell"]}"""));
+
+        // Each admin sees platform roles plus their own company's, never the other's.
+        call(MAD_ADMIN, get("/api/applications/alensi-insure/roles"))
+                .andExpect(jsonPath("$[?(@.code == 'senior-agent')].owner").value(contains("MAD")));
+        call(JUB_ADMIN, get("/api/targets")).andExpect(jsonPath("$[?(@.company == 'MAD')]").isEmpty());
+
+        // The role code resolves to the target's company's role. Jubilee's admin promotes Ann; Madison's resolves its own.
+        ok(send(JUB_ADMIN, post("/api/users/ann/grants"), grantBody("alensi-insure", "senior-agent", "JUB-KE-NRB-NWS-T1")));
+        call(JUB_ADMIN, get("/api/users/ann/grants"))
+                .andExpect(jsonPath("$[?(@.role == 'senior-agent')].roleOwner").value(contains("JUB")));
+        allowed(ANN, "me", "team.reports", "JUB-KE-NRB-NWS-T1", true);
+        ok(send(MAD_ADMIN, post("/api/users/musa/grants"), grantBody("alensi-insure", "senior-agent", "MAD-KE-CST-MSA")));
+        allowed(MOMBASA, "me", "team.reports", "MAD-KE-CST-MSA", false);
+    }
+
+    @Test
+    void companyRolesCannotEscalateOrCrossCompanies() throws Exception {
+        // Platform-wide roles and platform-only permissions stay with the platform.
+        denied(send(JUB_ADMIN, post("/api/applications/alensi-insure/roles"), """
+                {"code": "jub-global", "name": "x", "permissions": ["claims.view"]}"""));
+        send(JUB_ADMIN, post("/api/applications/alensi-identity/roles"), """
+                {"code": "jub-super", "name": "x", "owner": "JUB", "permissions": ["identity.platform.manage"]}""")
+                .andExpect(status().isBadRequest());
+        // No shadowing of platform roles, no roles for another company, no limits on platform roles.
+        send(JUB_ADMIN, post("/api/applications/alensi-insure/roles"), """
+                {"code": "branch-manager", "name": "x", "owner": "JUB", "permissions": ["claims.view"]}""")
+                .andExpect(status().isConflict());
+        denied(send(JUB_ADMIN, post("/api/applications/alensi-insure/roles"), """
+                {"code": "mad-thing", "name": "x", "owner": "MAD", "permissions": ["claims.view"]}"""));
+        denied(send(JUB_ADMIN, put("/api/applications/alensi-insure/roles/branch-manager/limits"), """
+                {"limits": [{"permission": "claims.approve", "currency": "KES", "maxAmount": null}]}"""));
+        // A company's own roles can only be granted inside the company, and only by its admins.
+        ok(send(JUB_ADMIN, post("/api/applications/alensi-insure/roles"), """
+                {"code": "jub-auditor", "name": "Auditor", "owner": "JUB", "permissions": ["claims.view"]}"""));
+        send(MAD_ADMIN, post("/api/users/musa/grants"), grantBody("alensi-insure", "jub-auditor", "MAD-KE-CST-MSA"))
+                .andExpect(status().isNotFound());
+        denied(send(CENTRAL, post("/api/users/tom/grants"), grantBody("alensi-insure", "jub-auditor", "JUB-KE-CEN-THK")));
+        send(MAD_ADMIN, put("/api/applications/alensi-insure/roles/jub-auditor/assignable-roles?owner=JUB"), """
+                {"roles": []}""").andExpect(status().isForbidden());
+    }
+
+    // ---- Approval limits ----
+
+    @Test
+    void approvalLimitsDecideWhenToEscalate() throws Exception {
+        String approve = "/api/users/%s/applications/alensi-insure/permissions/claims.approve/targets/%s";
+        call(MARY, get(approve.formatted("me", "JUB-KE-NRB-NWS") + "?amount=750000&currency=KES"))
+                .andExpect(jsonPath("$.allowed").value(true))
+                .andExpect(jsonPath("$.limits[0].currency").value("KES"))
+                .andExpect(jsonPath("$.limits[0].maxAmount").value(1000000));
+        call(MARY, get(approve.formatted("me", "JUB-KE-NRB-NWS") + "?amount=3000000&currency=KES"))
+                .andExpect(jsonPath("$.allowed").value(false));
+        call(MARY, get(approve.formatted("me", "JUB-KE-NRB-NWS") + "?amount=1000&currency=UGX"))
+                .andExpect(jsonPath("$.allowed").value(false));
+        // Head of claims (on JUB-KE) is unlimited in KES across all Kenyan branches.
+        call(HOC, get(approve.formatted("me", "JUB-KE-CEN-THK") + "?amount=3000000&currency=KES"))
+                .andExpect(jsonPath("$.allowed").value(true))
+                .andExpect(jsonPath("$.limits[0].maxAmount").doesNotExist());
+        // Agents hold no approval authority; non-limited permissions report no limits.
+        call(ANN, get(approve.formatted("me", "JUB-KE-NRB-NWS-T1") + "?amount=1&currency=KES"))
+                .andExpect(jsonPath("$.allowed").value(false));
+        call(ANN, get("/api/users/me/applications/alensi-insure/permissions/policies.sell/targets/JUB-KE-NRB-NWS-T1"))
+                .andExpect(jsonPath("$.limits").doesNotExist());
+    }
+
+    @Test
+    void insurersSetTheirOwnLimits() throws Exception {
+        ok(send(JUB_ADMIN, post("/api/applications/alensi-insure/roles"), """
+                {"code": "claims-officer", "name": "Claims officer", "owner": "JUB",
+                 "permissions": ["claims.view", "claims.approve"],
+                 "limits": [{"permission": "claims.approve", "currency": "KES", "maxAmount": 250000}]}"""));
+        ok(send(JUB_ADMIN, post("/api/users/carol/grants"), grantBody("alensi-insure", "claims-officer", "JUB-KE-CEN")));
+        String check = "/api/users/me/applications/alensi-insure/permissions/claims.approve/targets/JUB-KE-CEN-THK?amount=300000&currency=KES";
+        call(CENTRAL, get(check)).andExpect(jsonPath("$.allowed").value(false));
+        ok(send(JUB_ADMIN, put("/api/applications/alensi-insure/roles/claims-officer/limits?owner=JUB"), """
+                {"limits": [{"permission": "claims.approve", "currency": "KES", "maxAmount": 500000}]}"""));
+        call(CENTRAL, get(check)).andExpect(jsonPath("$.allowed").value(true));
+        send(JUB_ADMIN, put("/api/applications/alensi-insure/roles/claims-officer/limits?owner=JUB"), """
+                {"limits": [{"permission": "claims.view", "currency": "KES", "maxAmount": 1}]}""")
+                .andExpect(status().isBadRequest());
+    }
+
+    private void limits(KeycloakUser actor, String role, String owner, String limitJson) throws Exception {
+        send(actor, put("/api/applications/alensi-insure/roles/%s/limits%s".formatted(role, owner == null ? "" : "?owner=" + owner)),
+                "{\"limits\": [%s]}".formatted(limitJson)).andExpect(status().isOk());
     }
 
     private void role(String application, String code, String... permissions) throws Exception {
