@@ -1,0 +1,17 @@
+package io.alensi.identity.acl;
+
+import java.util.List;
+import java.util.Optional;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+
+public interface TargetRepository extends JpaRepository<Target, Long> {
+
+    Optional<Target> findByCode(String code);
+
+    boolean existsByCode(String code);
+
+    @Query("select t from Target t join fetch t.type left join fetch t.parent")
+    List<Target> findAllWithTypeAndParent();
+}
