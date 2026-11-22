@@ -1,5 +1,5 @@
 # Local development stack: Postgres (identity + keycloak databases) and Keycloak.
-# Run the service itself with ./mvnw spring-boot:run (or from the IDE).
+# Run the service itself with ./mvnw -pl service spring-boot:run (or from the IDE).
 services:
   postgres:
     image: postgres:17
@@ -36,7 +36,7 @@ services:
       - "8180:8080"
     volumes:
       - ./keycloak/import:/opt/keycloak/data/import:ro
-      # Built by: ./mvnw -f keycloak/extensions/pom.xml package
+      # Built by: ./mvnw package (or ./mvnw -pl keycloak/extensions package)
       - ./keycloak/providers:/opt/keycloak/providers:ro
     depends_on:
       postgres:

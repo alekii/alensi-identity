@@ -1,4 +1,4 @@
-package io.alensi.identity.config;
+package io.alensi.identity.keycloak;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

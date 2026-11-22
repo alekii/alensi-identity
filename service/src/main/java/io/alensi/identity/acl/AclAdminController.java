@@ -6,7 +6,7 @@ import java.util.Set;
 import java.util.function.Predicate;
 
 import io.alensi.identity.tenant.TenantContext;
-import io.alensi.identity.user.AccessGuard;
+import io.alensi.identity.acl.AccessGuard;
 import io.alensi.identity.user.UserAccount;
 import io.alensi.identity.user.UserDirectory;
 import jakarta.validation.Valid;
@@ -42,12 +42,15 @@ class AclAdminController {
     private final AclAdminService admin;
     private final UserDirectory directory;
     private final AccessGuard access;
+    private final CatalogService catalogService;
 
-    AclAdminController(AclCatalog catalog, AclAdminService admin, UserDirectory directory, AccessGuard access) {
+    AclAdminController(AclCatalog catalog, AclAdminService admin, UserDirectory directory, AccessGuard access,
+            CatalogService catalogService) {
         this.catalog = catalog;
         this.admin = admin;
         this.directory = directory;
         this.access = access;
+        this.catalogService = catalogService;
     }
 
     @GetMapping("/applications")
@@ -60,6 +63,16 @@ class AclAdminController {
     AclViews.ApplicationView createApplication(UserAccount caller, @Valid @RequestBody NewApplication body) {
         access.requirePlatform(caller);
         return admin.createApplication(caller, body.code(), body.name(), body.description());
+    }
+
+    /**
+     * Applies an application's catalog manifest (see {@link CatalogService}); idempotent, platform-only.
+     * Returns what changed. The manifest's {@code keycloak} section is for the registration script.
+     */
+    @PutMapping("/applications/{application}/catalog")
+    List<String> applyCatalog(UserAccount caller, @PathVariable String application,
+            @RequestBody CatalogService.Manifest manifest) {
+        return catalogService.apply(caller, application, manifest);
     }
 
     @GetMapping("/applications/{application}")

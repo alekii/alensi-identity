@@ -6,7 +6,7 @@ import java.util.SortedMap;
 import java.util.SortedSet;
 
 import io.alensi.identity.tenant.TenantContext;
-import io.alensi.identity.user.AccessGuard;
+import io.alensi.identity.acl.AccessGuard;
 import io.alensi.identity.user.UserAccount;
 import io.alensi.identity.user.UserDirectory;
 import io.alensi.identity.web.BadRequestException;

@@ -5,13 +5,11 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 
-import io.alensi.identity.acl.ApplicationRepository;
-import io.alensi.identity.acl.RoleGrant;
-import io.alensi.identity.acl.RoleGrantRepository;
-import io.alensi.identity.acl.RoleRepository;
 import io.alensi.identity.audit.AuditLog;
-import io.alensi.identity.config.IdentityProperties;
+import io.alensi.identity.keycloak.KeycloakAdminClient;
+import io.alensi.identity.keycloak.KeycloakUser;
 import io.alensi.identity.web.NotFoundException;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
@@ -28,22 +26,16 @@ public class UserDirectory {
 
     private final UserAccountRepository users;
     private final KeycloakAdminClient keycloak;
-    private final ApplicationRepository applications;
-    private final RoleRepository roles;
-    private final RoleGrantRepository grants;
     private final AuditLog audit;
-    private final IdentityProperties properties;
+    private final ApplicationEventPublisher events;
     private final Clock clock;
 
-    UserDirectory(UserAccountRepository users, KeycloakAdminClient keycloak, ApplicationRepository applications,
-            RoleRepository roles, RoleGrantRepository grants, AuditLog audit, IdentityProperties properties) {
+    UserDirectory(UserAccountRepository users, KeycloakAdminClient keycloak, AuditLog audit,
+            ApplicationEventPublisher events) {
         this.users = users;
         this.keycloak = keycloak;
-        this.applications = applications;
-        this.roles = roles;
-        this.grants = grants;
         this.audit = audit;
-        this.properties = properties;
+        this.events = events;
         this.clock = Clock.systemUTC();
     }
 
@@ -86,18 +78,7 @@ public class UserDirectory {
         user.syncFrom(source);
         user = users.save(user);
         audit.record(null, "user.provisioned", user.getUsername(), "id=" + user.getId());
-        if (properties.bootstrapAdmins().contains(user.getUsername())) {
-            grantBootstrapAdmin(user);
-        }
+        events.publishEvent(new UserProvisioned(user.getId(), user.getUsername()));
         return user;
-    }
-
-    private void grantBootstrapAdmin(UserAccount user) {
-        var application = applications.findByCode(AccessGuard.APPLICATION).orElseThrow();
-        var admin = roles.findByApplicationAndCodeAndTenantIsNull(application, "platform-admin").orElseThrow();
-        if (!grants.existsByUserAndRoleAndTargetIsNull(user, admin)) {
-            grants.save(new RoleGrant(user, admin, null, null));
-            audit.record(null, "grant.created", user.getUsername(), "bootstrap: alensi-identity/platform-admin on *");
-        }
     }
 }

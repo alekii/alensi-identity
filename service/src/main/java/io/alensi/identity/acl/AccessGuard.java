@@ -1,18 +1,11 @@
-package io.alensi.identity.user;
+package io.alensi.identity.acl;
 
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import io.alensi.identity.acl.PermissionEvaluator;
-import io.alensi.identity.acl.PermissionService;
-import io.alensi.identity.acl.Role;
-import io.alensi.identity.acl.RoleGrant;
-import io.alensi.identity.acl.RoleGrantRepository;
-import io.alensi.identity.acl.Scope;
-import io.alensi.identity.acl.TargetNode;
-import io.alensi.identity.acl.TargetRepository;
 import io.alensi.identity.tenant.Tenant;
+import io.alensi.identity.user.UserAccount;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;

@@ -3,6 +3,7 @@ package io.alensi.identity.user;
 import java.time.Instant;
 import java.util.UUID;
 
+import io.alensi.identity.keycloak.KeycloakUser;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;

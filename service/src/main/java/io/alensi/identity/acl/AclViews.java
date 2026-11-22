@@ -7,10 +7,21 @@ import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.UUID;
 
+import io.alensi.identity.tenant.Tenant;
+
 /** API representations of the ACL catalog. Built inside a transaction from managed entities. */
 public final class AclViews {
 
     private AclViews() {
+    }
+
+    public record TenantView(String code, String name, String rootTarget, String keycloakRealm,
+            String keycloakOrganization) {
+
+        static TenantView of(Tenant tenant, Target root) {
+            return new TenantView(tenant.getCode(), tenant.getName(), root.getCode(), tenant.getKeycloakRealm(),
+                    tenant.getKeycloakOrganization());
+        }
     }
 
     public record ApplicationView(String code, String name, String description) {

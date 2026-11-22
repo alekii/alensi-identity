@@ -1,4 +1,4 @@
-package io.alensi.identity.user;
+package io.alensi.identity.keycloak;
 
 import java.util.List;
 import java.util.UUID;

@@ -1,10 +1,12 @@
-package io.alensi.identity.tenant;
+package io.alensi.identity.acl;
 
 import java.util.List;
 
-import io.alensi.identity.acl.PermissionService;
 import io.alensi.identity.config.IdentityProperties;
-import io.alensi.identity.user.AccessGuard;
+import io.alensi.identity.tenant.Tenant;
+import io.alensi.identity.tenant.TenantContext;
+import io.alensi.identity.tenant.TenantMember;
+import io.alensi.identity.tenant.TenantRepository;
 import io.alensi.identity.user.CurrentUserArgumentResolver;
 import io.alensi.identity.user.UserAccount;
 import io.alensi.identity.web.BadRequestException;

@@ -5,6 +5,7 @@ the second factor, reading email codes from Mailpit and SMS codes from the Keycl
 (ALENSI_SMS_PROVIDER=log). Authenticator-app (TOTP) users need --totp-secret.
 
     python3 scripts/dev_login.py alice alice [--org jub] [--factor email|sms] [--totp-secret BASE32]
+                                 [--client alensi-insure-web --redirect http://localhost:3001/callback]
 """
 import argparse
 import base64
@@ -51,12 +52,6 @@ def fetch(url, form=None):
         return e.code, e.read().decode(), None
 
 
-def follow(status, page, location):
-    while location and not location.startswith(REDIRECT):
-        status, page, location = fetch(location)
-    return status, page, location
-
-
 def form_action(page):
     match = re.search(r'<form[^>]*id="(kc-form-login|kc-otp-login-form|kc-select-credential-form)"[^>]*action="([^"]+)"', page) \
         or re.search(r'<form[^>]*action="([^"]+)"', page)
@@ -93,6 +88,57 @@ def latest_sms_code():
     raise SystemExit("no SMS code in the Keycloak log")
 
 
+def login(username, password, org=None, factor=None, totp_secret=None, client_id="alensi-web", redirect=REDIRECT):
+    """Signs in through the browser flow (password + second factor) and returns an access token."""
+    verifier = secrets.token_urlsafe(48)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    scope = "openid" + (f" organization:{org}" if org else "")
+    jar.clear()
+
+    def done(location):
+        return location and location.startswith(redirect)
+
+    def follow_to(status, page, location):
+        while location and not done(location):
+            status, page, location = fetch(location)
+        return status, page, location
+
+    status, page, location = follow_to(*fetch(f"{KC}/auth?" + urllib.parse.urlencode({
+        "client_id": client_id, "redirect_uri": redirect, "response_type": "code", "scope": scope,
+        "code_challenge": challenge, "code_challenge_method": "S256"})))
+    since = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
+    status, page, location = follow_to(*fetch(form_action(page), {"username": username, "password": password}))
+
+    if factor:
+        another = re.search(r'<form[^>]*id="kc-select-try-another-way-form"[^>]*action="([^"]+)"', page)
+        status, page, location = follow_to(*fetch(html.unescape(another.group(1)), {"tryAnotherWay": "on"}))
+        options = re.findall(r'action="([^"]+)"[^>]*>\s*<input[^>]*name="authenticationExecution" value="([^"]+)".*?'
+                             r'select-auth-box-headline">\s*([^<]+?)\s*<', page, re.S)
+        wanted = "Email code" if factor == "email" else "SMS code"
+        action, execution = next((a, e) for a, e, label in options if label == wanted)
+        status, page, location = follow_to(*fetch(html.unescape(action), {"authenticationExecution": execution}))
+
+    if not location:
+        if 'id="alensi-code-sent"' in page:
+            sent = re.search(r'id="alensi-code-sent">([^<]+)', page).group(1).strip()
+            print("second factor:", html.unescape(sent), file=sys.stderr)
+            code = latest_sms_code() if "SMS" in sent else latest_email_code(since)
+            status, page, location = follow_to(*fetch(form_action(page), {"code": code}))
+        elif 'name="otp"' in page:
+            if not totp_secret:
+                raise SystemExit("authenticator app required: pass --totp-secret")
+            status, page, location = follow_to(*fetch(form_action(page), {"otp": totp(totp_secret)}))
+    if not done(location):
+        title = re.search(r"<title>([^<]*)", page)
+        raise SystemExit(f"login did not complete (HTTP {status}, page: {title.group(1) if title else '?'})")
+
+    code = urllib.parse.parse_qs(urllib.parse.urlparse(location).query)["code"][0]
+    tokens = json.load(urllib.request.urlopen(f"{KC}/token", urllib.parse.urlencode({
+        "grant_type": "authorization_code", "client_id": client_id, "code": code,
+        "redirect_uri": redirect, "code_verifier": verifier}).encode()))
+    return tokens["access_token"]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("username")
@@ -100,45 +146,10 @@ def main():
     parser.add_argument("--org", help="organization alias, e.g. jub, to select the tenant")
     parser.add_argument("--factor", choices=["email", "sms"], help="switch to this factor via 'Try another way'")
     parser.add_argument("--totp-secret")
+    parser.add_argument("--client", default="alensi-web")
+    parser.add_argument("--redirect", default=REDIRECT)
     args = parser.parse_args()
-
-    verifier = secrets.token_urlsafe(48)
-    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
-    scope = "openid" + (f" organization:{args.org}" if args.org else "")
-    status, page, location = follow(*fetch(f"{KC}/auth?" + urllib.parse.urlencode({
-        "client_id": "alensi-web", "redirect_uri": REDIRECT, "response_type": "code", "scope": scope,
-        "code_challenge": challenge, "code_challenge_method": "S256"})))
-    since = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
-    status, page, location = follow(*fetch(form_action(page), {"username": args.username, "password": args.password}))
-
-    if args.factor:
-        another = re.search(r'<form[^>]*id="kc-select-try-another-way-form"[^>]*action="([^"]+)"', page)
-        status, page, location = follow(*fetch(html.unescape(another.group(1)), {"tryAnotherWay": "on"}))
-        options = re.findall(r'action="([^"]+)"[^>]*>\s*<input[^>]*name="authenticationExecution" value="([^"]+)".*?'
-                             r'select-auth-box-headline">\s*([^<]+?)\s*<', page, re.S)
-        wanted = "Email code" if args.factor == "email" else "SMS code"
-        action, execution = next((a, e) for a, e, label in options if label == wanted)
-        status, page, location = follow(*fetch(html.unescape(action), {"authenticationExecution": execution}))
-
-    if not location:
-        if 'id="alensi-code-sent"' in page:
-            sent = re.search(r'id="alensi-code-sent">([^<]+)', page).group(1).strip()
-            print("second factor:", html.unescape(sent), file=sys.stderr)
-            code = latest_sms_code() if "SMS" in sent else latest_email_code(since)
-            status, page, location = follow(*fetch(form_action(page), {"code": code}))
-        elif 'name="otp"' in page:
-            if not args.totp_secret:
-                raise SystemExit("authenticator app required: pass --totp-secret")
-            status, page, location = follow(*fetch(form_action(page), {"otp": totp(args.totp_secret)}))
-    if not location:
-        title = re.search(r"<title>([^<]*)", page)
-        raise SystemExit(f"login did not complete (HTTP {status}, page: {title.group(1) if title else '?'})")
-
-    code = urllib.parse.parse_qs(urllib.parse.urlparse(location).query)["code"][0]
-    tokens = json.load(urllib.request.urlopen(f"{KC}/token", urllib.parse.urlencode({
-        "grant_type": "authorization_code", "client_id": "alensi-web", "code": code,
-        "redirect_uri": REDIRECT, "code_verifier": verifier}).encode()))
-    print(tokens["access_token"])
+    print(login(args.username, args.password, args.org, args.factor, args.totp_secret, args.client, args.redirect))
 
 
 if __name__ == "__main__":

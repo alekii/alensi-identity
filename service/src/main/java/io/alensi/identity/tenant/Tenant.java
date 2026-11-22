@@ -52,6 +52,11 @@ public class Tenant {
         return id;
     }
 
+    /** The tenant's id, or {@code null} for no tenant (platform-level). */
+    public static Long idOf(Tenant tenant) {
+        return tenant == null ? null : tenant.getId();
+    }
+
     public String getCode() {
         return code;
     }
