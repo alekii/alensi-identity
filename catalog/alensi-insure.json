@@ -1,0 +1,201 @@
+{
+  "name": "Alensi Insure",
+  "description": "Insurance policy and claims management, shared by insurers (tenants)",
+
+  "keycloak": {
+    "clients": [
+      {
+        "clientId": "alensi-insure",
+        "name": "Alensi Insure API",
+        "description": "Resource server (aud=alensi-insure); its service account runs background jobs",
+        "publicClient": false,
+        "serviceAccount": true,
+        "audiences": ["alensi-identity"]
+      },
+      {
+        "clientId": "alensi-insure-web",
+        "name": "Alensi Insure web app",
+        "description": "Staff web app: Authorization Code + PKCE",
+        "publicClient": true,
+        "redirectUris": ["http://localhost:3001/*"],
+        "webOrigins": ["http://localhost:3001"],
+        "audiences": ["alensi-insure", "alensi-identity"]
+      }
+    ],
+    "serviceAccountRoles": ["alensi-identity/service"]
+  },
+
+  "targetTypes": [
+    { "code": "company", "name": "Company" },
+    { "code": "country", "name": "Country", "parent": "company" },
+    { "code": "region", "name": "Region", "parent": "country" },
+    { "code": "branch", "name": "Branch", "parent": "region" },
+    { "code": "team", "name": "Team", "parent": "branch" }
+  ],
+
+  "permissions": [
+    { "code": "customers.view", "description": "View customer profiles, contacts and history" },
+    { "code": "customers.create", "description": "Register customers" },
+    { "code": "customers.update", "description": "Update customer details" },
+    { "code": "customers.documents.view", "description": "View customer documents (IDs, reports, receipts)" },
+    { "code": "customers.documents.upload", "description": "Upload customer documents" },
+    { "code": "documents.sensitive.view", "description": "Download SENSITIVE (identity) and MEDICAL documents and read their extractions" },
+
+    { "code": "products.view", "description": "View insurance products and their coverage" },
+    { "code": "products.manage", "description": "Configure insurance products" },
+    { "code": "coverage.manage", "description": "Define coverage, limits, deductibles, exclusions and eligibility rules" },
+
+    { "code": "policies.view", "description": "View policies and policy documents" },
+    { "code": "policies.quote", "description": "Prepare quotes" },
+    { "code": "policies.issue", "description": "Issue policies within underwriting rules" },
+    { "code": "policies.renew", "description": "Renew policies" },
+    { "code": "policies.cancel", "description": "Cancel policies" },
+    { "code": "policies.underwrite", "description": "Accept risk; limited by sum insured", "limited": true },
+
+    { "code": "premiums.view", "description": "View premiums, schedules and outstanding amounts" },
+    { "code": "premiums.adjust", "description": "Adjust premiums; limited by adjustment amount", "limited": true },
+    { "code": "payments.view", "description": "View payments" },
+    { "code": "payments.record", "description": "Record payments" },
+
+    { "code": "claims.view", "description": "View claims and their documents" },
+    { "code": "claims.submit", "description": "Submit claims for customers" },
+    { "code": "claims.assess", "description": "Assess claims and record findings" },
+    { "code": "claims.approve", "description": "Approve claims; limited by claim amount", "limited": true },
+    { "code": "claims.approve-senior", "description": "Decide (approve or reject) claims at SENIOR or INVESTIGATION review level" },
+    { "code": "claims.reject", "description": "Reject claims" },
+    { "code": "claims.escalate", "description": "Escalate claims up the review path" },
+    { "code": "claims.settle", "description": "Release settlement payments; limited by amount", "limited": true },
+    { "code": "claims.investigate", "description": "Investigate anomaly and fraud flags" },
+    { "code": "workflows.manage", "description": "Configure claim workflows, review queues and escalation rules" },
+    { "code": "workflows.act", "description": "Service only: call Insure on behalf of an acting user (X-Acting-User)" },
+
+    { "code": "ai.assist", "description": "Use the AI assistant (retrieval, summaries, document extraction)" },
+    { "code": "ai.recommendations.view", "description": "See AI risk scores, triage and anomaly recommendations with their reasons" },
+    { "code": "knowledge.manage", "description": "Ingest and supersede AI knowledge-base documents (procedures, guidelines, wordings)" },
+
+    { "code": "reports.team", "description": "Team reports" },
+    { "code": "reports.branch", "description": "Branch reports" },
+    { "code": "reports.region", "description": "Regional reports" },
+    { "code": "reports.company", "description": "Company-wide reports" },
+    { "code": "audit.view", "description": "View insurance audit trails and decision records" }
+  ],
+
+  "roles": [
+    {
+      "code": "agent", "name": "Agent",
+      "permissions": ["customers.view", "customers.create", "customers.update", "customers.documents.view",
+        "customers.documents.upload", "products.view", "policies.view", "policies.quote", "premiums.view",
+        "payments.view", "claims.submit", "claims.view", "ai.assist"]
+    },
+    {
+      "code": "customer-service", "name": "Customer service",
+      "permissions": ["customers.view", "customers.update", "customers.documents.view", "customers.documents.upload",
+        "products.view", "policies.view", "policies.renew", "premiums.view", "payments.view", "payments.record",
+        "claims.submit", "claims.view", "ai.assist"]
+    },
+    {
+      "code": "team-lead", "name": "Team lead",
+      "permissions": ["customers.view", "customers.create", "customers.update", "customers.documents.view",
+        "customers.documents.upload", "products.view", "policies.view", "policies.quote", "policies.issue",
+        "premiums.view", "payments.view", "claims.submit", "claims.view", "ai.assist", "reports.team"],
+      "assigns": ["agent"]
+    },
+    {
+      "code": "branch-manager", "name": "Branch manager",
+      "permissions": ["customers.view", "customers.create", "customers.update", "customers.documents.view",
+        "customers.documents.upload", "products.view", "policies.view", "policies.quote", "policies.issue",
+        "policies.renew", "policies.cancel", "premiums.view", "premiums.adjust", "payments.view", "payments.record",
+        "claims.submit", "claims.view", "claims.approve", "claims.reject", "claims.escalate", "ai.assist",
+        "ai.recommendations.view", "reports.team", "reports.branch"],
+      "assigns": ["team-lead", "customer-service"],
+      "limits": [
+        { "permission": "claims.approve", "currency": "KES", "maxAmount": 1000000 },
+        { "permission": "premiums.adjust", "currency": "KES", "maxAmount": 50000 }
+      ]
+    },
+    {
+      "code": "regional-manager", "name": "Regional manager",
+      "permissions": ["customers.view", "customers.documents.view", "products.view", "policies.view", "policies.cancel",
+        "premiums.view", "premiums.adjust", "payments.view", "claims.view", "claims.approve", "claims.reject",
+        "claims.escalate", "ai.recommendations.view", "reports.team", "reports.branch", "reports.region", "claims.approve-senior"],
+      "assigns": ["branch-manager"],
+      "limits": [
+        { "permission": "claims.approve", "currency": "KES", "maxAmount": 5000000 },
+        { "permission": "premiums.adjust", "currency": "KES", "maxAmount": 250000 }
+      ]
+    },
+    {
+      "code": "underwriter", "name": "Underwriter",
+      "permissions": ["customers.view", "customers.documents.view", "products.view", "policies.view", "policies.issue",
+        "policies.underwrite", "ai.assist", "ai.recommendations.view", "documents.sensitive.view"],
+      "limits": [{ "permission": "policies.underwrite", "currency": "KES", "maxAmount": 10000000 }]
+    },
+    {
+      "code": "senior-underwriter", "name": "Senior underwriter",
+      "permissions": ["customers.view", "customers.documents.view", "products.view", "policies.view", "policies.issue",
+        "policies.underwrite", "policies.cancel", "ai.assist", "ai.recommendations.view", "reports.company", "documents.sensitive.view"],
+      "assigns": ["underwriter"],
+      "limits": [{ "permission": "policies.underwrite", "currency": "KES", "maxAmount": 100000000 }]
+    },
+    {
+      "code": "claims-adjuster", "name": "Claims adjuster",
+      "permissions": ["customers.view", "customers.documents.view", "policies.view", "claims.view", "claims.assess",
+        "claims.escalate", "ai.assist", "ai.recommendations.view", "documents.sensitive.view"]
+    },
+    {
+      "code": "claims-officer", "name": "Claims officer",
+      "permissions": ["customers.view", "customers.documents.view", "policies.view", "claims.view", "claims.assess",
+        "claims.approve", "claims.reject", "claims.escalate", "ai.assist", "ai.recommendations.view", "documents.sensitive.view"],
+      "limits": [{ "permission": "claims.approve", "currency": "KES", "maxAmount": 500000 }]
+    },
+    {
+      "code": "claims-investigator", "name": "Claims investigator",
+      "permissions": ["customers.view", "customers.documents.view", "policies.view", "claims.view", "claims.investigate",
+        "claims.escalate", "ai.assist", "ai.recommendations.view", "documents.sensitive.view"]
+    },
+    {
+      "code": "head-of-claims", "name": "Head of claims",
+      "permissions": ["customers.view", "customers.documents.view", "policies.view", "claims.view", "claims.assess",
+        "claims.approve", "claims.reject", "claims.escalate", "claims.settle", "claims.investigate",
+        "workflows.manage", "ai.assist", "ai.recommendations.view", "reports.company", "claims.approve-senior", "documents.sensitive.view", "knowledge.manage"],
+      "assigns": ["claims-officer", "claims-adjuster", "claims-investigator"],
+      "limits": [
+        { "permission": "claims.approve", "currency": "KES", "maxAmount": null },
+        { "permission": "claims.settle", "currency": "KES", "maxAmount": null }
+      ]
+    },
+    {
+      "code": "finance-officer", "name": "Finance officer",
+      "permissions": ["customers.view", "policies.view", "premiums.view", "premiums.adjust", "payments.view",
+        "payments.record", "claims.view", "claims.settle", "reports.branch"],
+      "limits": [
+        { "permission": "premiums.adjust", "currency": "KES", "maxAmount": 100000 },
+        { "permission": "claims.settle", "currency": "KES", "maxAmount": 2000000 }
+      ]
+    },
+    {
+      "code": "product-manager", "name": "Product manager",
+      "permissions": ["products.view", "products.manage", "coverage.manage", "policies.view", "reports.company", "knowledge.manage"]
+    },
+    {
+      "code": "auditor", "name": "Auditor (read-only)",
+      "permissions": ["customers.view", "customers.documents.view", "products.view", "policies.view", "premiums.view",
+        "payments.view", "claims.view", "ai.recommendations.view", "reports.team", "reports.branch", "reports.region",
+        "reports.company", "audit.view"]
+    },
+    {
+      "code": "flow-service", "name": "Alensi Flow (service account)",
+      "permissions": ["workflows.act"]
+    }
+  ],
+
+  "assignableBy": [
+    {
+      "role": "alensi-identity/company-admin",
+      "assigns": ["regional-manager", "senior-underwriter", "head-of-claims", "finance-officer", "product-manager",
+        "auditor", "claims-adjuster", "claims-officer", "claims-investigator", "underwriter"]
+    },
+    { "role": "alensi-identity/regional-admin", "assigns": ["branch-manager"] },
+    { "role": "alensi-identity/branch-admin", "assigns": ["team-lead", "customer-service"] }
+  ]
+}

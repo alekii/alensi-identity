@@ -1,4 +1,4 @@
-package io.alensi.identity.user;
+package io.alensi.identity.keycloak;
 
 import java.net.URI;
 import java.time.Duration;

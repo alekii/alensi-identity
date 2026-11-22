@@ -6,6 +6,7 @@ import java.util.Collection;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
@@ -14,7 +15,7 @@ import java.util.stream.Collectors;
 import io.alensi.identity.audit.AuditLog;
 import io.alensi.identity.tenant.Tenant;
 import io.alensi.identity.tenant.TenantService;
-import io.alensi.identity.user.AccessGuard;
+import io.alensi.identity.acl.AccessGuard;
 import io.alensi.identity.user.UserAccount;
 import io.alensi.identity.web.BadRequestException;
 import io.alensi.identity.web.ConflictException;
@@ -49,6 +50,27 @@ public class AclAdminService {
         this.audit = audit;
         this.access = access;
         this.tenants = tenants;
+    }
+
+    /**
+     * Onboards a tenant (platform-only): the tenant with its Keycloak organization, and its root
+     * target, of a shared top-level type such as {@code company}.
+     */
+    public AclViews.TenantView createTenant(UserAccount actor, String code, String name, String rootType,
+            String organization) {
+        access.requirePlatform(actor);
+        if (targets.existsByCode(code)) {
+            throw new ConflictException("Target '%s' already exists".formatted(code));
+        }
+        TargetType type = targetType(rootType, null);
+        if (type.getParent() != null) {
+            throw new BadRequestException("Tenant roots need a top-level target type, not '%s'".formatted(rootType));
+        }
+        Tenant tenant = tenants.create(actor.getId(), code, name,
+                organization == null ? code.toLowerCase(Locale.ROOT) : organization);
+        Target root = targets.save(new Target(tenant, type, code, name));
+        audit.record(actor.getId(), tenant.getId(), "target.created", root.getCode(), "tenant root, type=" + rootType);
+        return AclViews.TenantView.of(tenant, root);
     }
 
     public AclViews.ApplicationView createApplication(UserAccount actor, String code, String name, String description) {
@@ -96,7 +118,7 @@ public class AclAdminService {
         }
         Role role = roles.save(new Role(application, code, name, new HashSet<>(resolved), tenant));
         role.replaceLimits(resolveLimits(role, limits));
-        audit.record(actor.getId(), tenant, "role.created", AclViews.RoleView.reference(role),
+        audit.record(actor.getId(), Tenant.idOf(tenant), "role.created", AclViews.RoleView.reference(role),
                 "permissions=%s limits=%s".formatted(new TreeSet<>(permissionCodes), describe(limits)));
         return AclViews.RoleView.of(role);
     }
@@ -107,7 +129,7 @@ public class AclAdminService {
         Role role = role(applicationCode, roleCode, tenantCode);
         access.requireTenantConfiguration(actor, role.getTenant());
         role.replaceLimits(resolveLimits(role, limits));
-        audit.record(actor.getId(), role.getTenant(), "role.limits-updated", AclViews.RoleView.reference(role), describe(limits));
+        audit.record(actor.getId(), Tenant.idOf(role.getTenant()), "role.limits-updated", AclViews.RoleView.reference(role), describe(limits));
         return AclViews.RoleView.of(role);
     }
 
@@ -138,7 +160,7 @@ public class AclAdminService {
         }
         requireNoCycle(role, resolved);
         role.replaceAssignableRoles(resolved);
-        audit.record(actor.getId(), role.getTenant(), "role.assignable-roles-updated", AclViews.RoleView.reference(role),
+        audit.record(actor.getId(), Tenant.idOf(role.getTenant()), "role.assignable-roles-updated", AclViews.RoleView.reference(role),
                 "assignable=" + resolved.stream().map(AclViews.RoleView::reference).collect(Collectors.toCollection(TreeSet::new)));
         return AclViews.RoleView.of(role);
     }
@@ -158,7 +180,7 @@ public class AclAdminService {
         }
         TargetType parent = parentCode == null ? null : targetType(parentCode, tenant);
         TargetType type = targetTypes.save(new TargetType(code, name, parent, tenant));
-        audit.record(actor.getId(), tenant, "target-type.created", code, "parent=" + parentCode);
+        audit.record(actor.getId(), Tenant.idOf(tenant), "target-type.created", code, "parent=" + parentCode);
         return AclViews.TargetTypeView.of(type);
     }
 
@@ -182,7 +204,7 @@ public class AclAdminService {
                     : "Targets of type '%s' need a parent of type '%s'".formatted(typeCode, expectedParentType.getCode()));
         }
         Target target = targets.save(new Target(type, code, name, parent));
-        audit.record(actor.getId(), target.getTenant(), "target.created", code, "type=%s parent=%s".formatted(typeCode, parentCode));
+        audit.record(actor.getId(), Tenant.idOf(target.getTenant()), "target.created", code, "type=%s parent=%s".formatted(typeCode, parentCode));
         return AclViews.TargetView.of(target);
     }
 
@@ -210,10 +232,10 @@ public class AclAdminService {
             return Optional.empty();
         }
         if (target != null) {
-            tenants.ensureMember(actor, target.getTenant(), user);
+            tenants.ensureMember(actor.getId(), target.getTenant(), user);
         }
         RoleGrant grant = grants.save(new RoleGrant(user, role, target, actor.getId()));
-        audit.record(actor.getId(), grant.getTenant(), "grant.created", user.getUsername(),
+        audit.record(actor.getId(), Tenant.idOf(grant.getTenant()), "grant.created", user.getUsername(),
                 "%s on %s".formatted(AclViews.RoleView.reference(role), targetCode == null ? "*" : targetCode));
         return Optional.of(AclViews.GrantView.of(grant));
     }
@@ -237,7 +259,7 @@ public class AclAdminService {
                 .orElseThrow(() -> new NotFoundException("Grant %d not found for '%s'".formatted(grantId, user.getUsername())));
         access.requireCanAssign(actor, user, grant.getRole(), grant.isWildcard() ? null : grant.getTarget().getCode());
         grants.delete(grant);
-        audit.record(actor.getId(), grant.getTenant(), "grant.revoked", user.getUsername(), "%s on %s".formatted(
+        audit.record(actor.getId(), Tenant.idOf(grant.getTenant()), "grant.revoked", user.getUsername(), "%s on %s".formatted(
                 AclViews.RoleView.reference(grant.getRole()), grant.isWildcard() ? "*" : grant.getTarget().getCode()));
     }
 
@@ -253,7 +275,7 @@ public class AclAdminService {
                         application.getCode(), target == null ? "" : " for '%s'".formatted(target.getCode()))));
     }
 
-    private Set<RoleLimit> resolveLimits(Role role, List<LimitSpec> specs) {
+    static Set<RoleLimit> resolveLimits(Role role, List<LimitSpec> specs) {
         Set<RoleLimit> resolved = new HashSet<>();
         for (LimitSpec spec : specs == null ? List.<LimitSpec>of() : specs) {
             Permission permission = role.getPermissions().stream()
@@ -279,7 +301,7 @@ public class AclAdminService {
      * hierarchy: if the role were reachable from its own assignable roles, its holders could create
      * peers or superiors.
      */
-    private static void requireNoCycle(Role role, Set<Role> assignable) {
+    static void requireNoCycle(Role role, Set<Role> assignable) {
         Set<Long> seen = new HashSet<>();
         Deque<Role> pending = new ArrayDeque<>(assignable);
         while (!pending.isEmpty()) {
@@ -312,6 +334,11 @@ public class AclAdminService {
     private Application application(String code) {
         return applications.findByCode(code)
                 .orElseThrow(() -> new NotFoundException("Application '%s' not found".formatted(code)));
+    }
+
+    @Transactional(readOnly = true)
+    public Target root(Tenant tenant) {
+        return targets.findByTenantAndParentIsNull(tenant).orElseThrow();
     }
 
     private Role role(String applicationCode, String roleCode, String tenantCode) {

@@ -1,10 +1,11 @@
-package io.alensi.identity.audit;
+package io.alensi.identity.acl;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
-import io.alensi.identity.user.AccessGuard;
+import io.alensi.identity.audit.AuditEvent;
+import io.alensi.identity.audit.AuditEventRepository;
 import io.alensi.identity.user.UserAccount;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.web.bind.annotation.GetMapping;

@@ -11,9 +11,9 @@ import io.alensi.identity.audit.AuditLog;
 import io.alensi.identity.config.IdentityProperties;
 import io.alensi.identity.tenant.Tenant;
 import io.alensi.identity.tenant.TenantService;
-import io.alensi.identity.user.AccessGuard;
-import io.alensi.identity.user.KeycloakAdminClient;
-import io.alensi.identity.user.KeycloakUser;
+import io.alensi.identity.acl.AccessGuard;
+import io.alensi.identity.keycloak.KeycloakAdminClient;
+import io.alensi.identity.keycloak.KeycloakUser;
 import io.alensi.identity.user.UserAccount;
 import io.alensi.identity.user.UserDirectory;
 import io.alensi.identity.web.BadRequestException;
@@ -69,7 +69,7 @@ public class StaffOnboardingService {
         KeycloakUser account = existing.orElseGet(() -> keycloak.createUser(email, staff.firstName(), staff.lastName(),
                 staff.phoneNumber(), requiredActions(staff)));
         UserAccount user = directory.findOrProvision(account);
-        tenants.ensureMember(actor, tenant, user);
+        tenants.ensureMember(actor.getId(), tenant, user);
 
         List<AclViews.GrantView> granted = new ArrayList<>();
         for (GrantRequest grant : staff.grants()) {
@@ -80,7 +80,7 @@ public class StaffOnboardingService {
         if (invited) {
             invite(account);
         }
-        audit.record(actor.getId(), tenant, "staff.onboarded", user.getUsername(),
+        audit.record(actor.getId(), Tenant.idOf(tenant), "staff.onboarded", user.getUsername(),
                 "newAccount=%s invited=%s grants=%d".formatted(existing.isEmpty(), invited, granted.size()));
         return new Onboarded(user.getUsername(), existing.isEmpty(), invited, granted);
     }
@@ -96,7 +96,7 @@ public class StaffOnboardingService {
             throw new ConflictException("'%s' has already set up their account".formatted(username));
         }
         invite(account);
-        audit.record(actor.getId(), tenant, "staff.invite-resent", username, null);
+        audit.record(actor.getId(), Tenant.idOf(tenant), "staff.invite-resent", username, null);
     }
 
     private void invite(KeycloakUser account) {

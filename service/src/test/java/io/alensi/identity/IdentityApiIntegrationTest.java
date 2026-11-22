@@ -12,8 +12,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.util.Optional;
 import java.util.UUID;
 
-import io.alensi.identity.user.KeycloakAdminClient;
-import io.alensi.identity.user.KeycloakUser;
+import io.alensi.identity.keycloak.KeycloakAdminClient;
+import io.alensi.identity.keycloak.KeycloakUser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

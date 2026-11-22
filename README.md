@@ -83,6 +83,7 @@ Platform admins can add further admin levels, e.g. `team-admin`. See [docs/acces
 | POST | `/api/tenants/{tenant}/staff` | Onboard a person: account (or reuse), membership, grants, invite email |
 | POST | `/api/tenants/{tenant}/staff/{username}/invite` | Re-send the invite while setup is pending |
 | GET | `/api/users/me` | Caller's profile |
+| GET | `/api/users/me/context` | Caller and the tenant this request acts in (used by the client starter) |
 | GET | `/api/users/username/{username}`, `/api/users/id/{id}` | Profile (`identity.users.read`) |
 | PUT | `/api/users/username/{username}/access` | Suspend or reactivate a whole account across all tenants (platform-only) |
 | GET | `/api/users/{user}/applications/{app}/permissions?targetCode=&targetType=&compressed=` | Permission map `type -> target -> [permissions]` |
@@ -91,6 +92,7 @@ Platform admins can add further admin levels, e.g. `team-admin`. See [docs/acces
 | GET | `/api/users/{user}/applications/{app}/permissions/{permission}/targets?compressed=` | Target codes, or `["*"]` |
 | GET | `/api/users/{user}/applications/{app}/targets?targetType=` | Targets the user has any grant on |
 | GET/POST | `/api/applications`, `/api/applications/{app}/permissions` | Catalog (writes are platform-only) |
+| PUT | `/api/applications/{app}/catalog` | Apply an application's catalog manifest: permissions, roles, limits, chains, target types. Idempotent and additive, platform-only |
 | GET/POST | `/api/applications/{app}/roles` | Roles; `owner` creates a company role (`identity.roles.manage` on the company) |
 | PUT | `/api/applications/{app}/roles/{role}/assignable-roles?owner=` | Set which roles an admin role may assign |
 | PUT | `/api/applications/{app}/roles/{role}/limits?owner=` | Set a role's limits per limited permission and currency |
@@ -105,10 +107,37 @@ Errors are returned as RFC 9457 problem details.
 Requires Java 21, Docker and Python 3.
 
 ```bash
-./mvnw -f keycloak/extensions/pom.xml package   # Keycloak email/SMS code authenticators -> keycloak/providers
-docker compose up -d          # Postgres :5433, Keycloak :8180 (admin/admin), Mailpit :8025, then flows + MFA config
-./mvnw spring-boot:run        # service on :8090
-./mvnw test                   # unit tests + API tests on Testcontainers Postgres
+./mvnw package -DskipTests             # builds both modules; the Keycloak extension jar lands in keycloak/providers
+docker compose up -d                    # Postgres :5433, Keycloak :8180 (admin/admin), Mailpit :8025, then flows + MFA config
+./mvnw -pl service spring-boot:run      # service on :8090
+./mvnw test                             # all modules: unit tests + API tests on Testcontainers Postgres
+```
+
+The repository is a Maven multi-module build. The root `pom.xml` only aggregates; it is not a parent:
+
+| Module | What it is |
+|---|---|
+| `service/` | The alensi-identity Spring Boot service (Spring Boot parent and dependency management) |
+| `keycloak/extensions/` | Keycloak providers (email/SMS code authenticators), compiled against Keycloak 26.8's own dependency versions |
+| `client/` | `alensi-identity-spring-boot-starter`: permission checks for services such as alensi-insure ([client/README.md](client/README.md)) |
+
+Inside `service`, each package under `io.alensi.identity` is a Spring Modulith application module. `ModularityTests` fails the build on dependency cycles or on use of another module's internals, and writes module diagrams to `service/target/spring-modulith-docs`.
+
+| Module | Responsibility | Depends on |
+|---|---|---|
+| `staff` | Onboarding people into a tenant | acl, tenant, user, keycloak, audit, config |
+| `acl` | Applications, roles, targets, grants, permission evaluation; authorization of this API (`AccessGuard`); admin, permission, tenant and audit endpoints | tenant, user, audit, config |
+| `tenant` | Tenants, memberships, Keycloak organizations (no authorization: callers authorize) | user, keycloak, audit, config |
+| `user` | Local accounts mirrored from Keycloak; publishes `UserProvisioned` | keycloak, audit |
+| `keycloak` | Keycloak Admin API client | config |
+| `audit` | Audit log (by tenant id) | — |
+| `config`, `web` | Properties, security, error responses | — |
+
+Dependencies only point down the table. Upward needs use events: e.g. `acl` grants bootstrap admins by listening to `UserProvisioned`.
+
+```bash
+./mvnw -pl service test                 # one module
+./mvnw -pl keycloak/extensions package  # rebuild the Keycloak jar, then: docker compose restart keycloak
 ```
 
 Development realm users: `admin/admin` (bootstrap platform admin) and `alice/alice`. Email (invites, codes) goes to Mailpit at http://localhost:8025. Dev SMS codes appear in the Keycloak log.
@@ -119,6 +148,16 @@ Sign-in always needs a second factor, and `alensi-web` has no password grant. To
 TOKEN=$(python3 scripts/dev_login.py admin admin)            # add --org jub to pick a tenant
 curl -s localhost:8090/api/users/me -H "Authorization: Bearer $TOKEN"
 ```
+
+### Registering an application
+
+An application is described by one manifest, e.g. [catalog/alensi-insure.json](catalog/alensi-insure.json): its Keycloak clients plus its catalog (34 permissions and 14 default roles for alensi-insure, with KES approval limits and management chains). Register or update it with:
+
+```bash
+python3 scripts/register_application.py catalog/alensi-insure.json [--show-secrets]
+```
+
+The script creates or updates the Keycloak clients (lightweight tokens with `sub`, organization and audiences; PKCE; no password grant), grants the API client's service account its identity role, and applies the catalog. Running it again changes nothing.
 
 Any Keycloak client that calls this service needs three protocol mappers, all with *Add to lightweight access token* enabled: an **audience** mapper for `alensi-identity`, a **subject (`sub`)** mapper (Keycloak 26.8 drops `sub` from lightweight tokens by default), and an **organization membership** mapper. The client also needs `organization` as an optional client scope. The `alensi-identity` service account needs realm-management `view-users`, `query-users`, `manage-organizations` and `manage-users`; Keycloak requires the last one to add organization members.
 

@@ -1,9 +1,16 @@
-package io.alensi.identity.user;
+package io.alensi.identity.acl;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 import io.alensi.identity.audit.AuditLog;
+import io.alensi.identity.tenant.TenantContext;
+import io.alensi.identity.user.UserAccount;
+import io.alensi.identity.user.UserAccountRepository;
+import io.alensi.identity.user.UserDirectory;
+import io.alensi.identity.user.UserProfile;
+import io.alensi.identity.user.UserStatus;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,17 +29,36 @@ class UserController {
     private final UserAccountRepository users;
     private final AccessGuard access;
     private final AuditLog audit;
+    private final PermissionService permissions;
 
-    UserController(UserDirectory directory, UserAccountRepository users, AccessGuard access, AuditLog audit) {
+    UserController(UserDirectory directory, UserAccountRepository users, AccessGuard access, AuditLog audit,
+            PermissionService permissions) {
         this.directory = directory;
         this.users = users;
         this.access = access;
         this.audit = audit;
+        this.permissions = permissions;
     }
 
     @GetMapping("/me")
     UserProfile me(UserAccount caller) {
         return UserProfile.of(caller);
+    }
+
+    /**
+     * Who the caller is and which tenant this request acts in (from the token's organization or
+     * {@code X-Alensi-Tenant}); {@code tenant} is null when the caller works in several and chose none.
+     */
+    @GetMapping("/me/context")
+    MeContext context(UserAccount caller, TenantContext context) {
+        List<String> tenants = permissions.activeMemberships(caller).stream()
+                .map(member -> member.getTenant().getCode())
+                .sorted()
+                .toList();
+        return new MeContext(caller.getId(), caller.getUsername(), context.tenantCode(), tenants);
+    }
+
+    record MeContext(UUID id, String username, String tenant, List<String> tenants) {
     }
 
     @GetMapping("/id/{id}")

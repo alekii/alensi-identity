@@ -95,6 +95,15 @@ public class Role {
         return permissions;
     }
 
+    public void rename(String name) {
+        this.name = name;
+    }
+
+    public void replacePermissions(Set<Permission> newPermissions) {
+        permissions.clear();
+        permissions.addAll(newPermissions);
+    }
+
     public Tenant getTenant() {
         return tenant;
     }

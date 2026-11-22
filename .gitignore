@@ -6,3 +6,4 @@ target/
 .DS_Store
 keycloak/providers/*.jar
 keycloak/extensions/target/
+__pycache__/
