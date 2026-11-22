@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.SortedMap;
 import java.util.SortedSet;
 
+import io.alensi.identity.tenant.TenantContext;
 import io.alensi.identity.user.AccessGuard;
 import io.alensi.identity.user.UserAccount;
 import io.alensi.identity.user.UserDirectory;
@@ -17,7 +18,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Permission queries for a user in an application. {@code {user}} is a username or {@code me}.
+ * Permission queries for a user in an application, within the request's tenant (see
+ * {@link TenantContext}). {@code {user}} is a username or {@code me}.
  * Querying someone else requires {@code identity.permissions.read}, and answers are limited to the
  * part of the target tree the caller holds it on: a branch admin sees their staff's access in their
  * branch only.
@@ -39,10 +41,10 @@ class PermissionController {
     }
 
     @GetMapping("/permissions")
-    SortedMap<String, SortedMap<String, SortedSet<String>>> permissions(UserAccount caller, @PathVariable String user,
+    SortedMap<String, SortedMap<String, SortedSet<String>>> permissions(UserAccount caller, TenantContext context, @PathVariable String user,
             @PathVariable String application, @RequestParam(required = false) String targetCode,
             @RequestParam(required = false) String targetType, @RequestParam(defaultValue = "false") boolean compressed) {
-        Query query = query(caller, user, application);
+        Query query = query(caller, context, user, application);
         if (targetCode != null) {
             return query.evaluator().permissionsOn(query.target(targetCode));
         }
@@ -50,16 +52,16 @@ class PermissionController {
     }
 
     @GetMapping("/permissions/{permission}")
-    Decision hasPermission(UserAccount caller, @PathVariable String user, @PathVariable String application,
+    Decision hasPermission(UserAccount caller, TenantContext context, @PathVariable String user, @PathVariable String application,
             @PathVariable String permission) {
-        Query query = query(caller, user, application);
+        Query query = query(caller, context, user, application);
         return new Decision(query.evaluator().hasPermission(permission, query.scope()));
     }
 
     @GetMapping("/permissions/{permission}/targets")
-    List<String> permissionTargets(UserAccount caller, @PathVariable String user, @PathVariable String application,
+    List<String> permissionTargets(UserAccount caller, TenantContext context, @PathVariable String user, @PathVariable String application,
             @PathVariable String permission, @RequestParam(defaultValue = "false") boolean compressed) {
-        Query query = query(caller, user, application);
+        Query query = query(caller, context, user, application);
         return query.evaluator().targetsWith(permission, compressed, query.scope());
     }
 
@@ -69,10 +71,10 @@ class PermissionController {
      * service can escalate instead of approving.
      */
     @GetMapping("/permissions/{permission}/targets/{target}")
-    Decision hasPermissionOnTarget(UserAccount caller, @PathVariable String user, @PathVariable String application,
+    Decision hasPermissionOnTarget(UserAccount caller, TenantContext context, @PathVariable String user, @PathVariable String application,
             @PathVariable String permission, @PathVariable String target,
             @RequestParam(required = false) BigDecimal amount, @RequestParam(required = false) String currency) {
-        Query query = query(caller, user, application);
+        Query query = query(caller, context, user, application);
         PermissionEvaluator evaluator = query.evaluator();
         TargetNode node = query.target(target);
         if (!evaluator.isLimited(permission)) {
@@ -92,20 +94,21 @@ class PermissionController {
     }
 
     @GetMapping("/targets")
-    List<TargetNode> targets(UserAccount caller, @PathVariable String user, @PathVariable String application,
+    List<TargetNode> targets(UserAccount caller, TenantContext context, @PathVariable String user, @PathVariable String application,
             @RequestParam(required = false) String targetType) {
-        Query query = query(caller, user, application);
+        Query query = query(caller, context, user, application);
         return query.evaluator().targets(targetType, query.scope());
     }
 
-    private Query query(UserAccount caller, String user, String application) {
+    /** The subject's permissions in the request's tenant (all their tenants if none was chosen). */
+    private Query query(UserAccount caller, TenantContext context, String user, String application) {
         if (ME.equals(user) || caller.getUsername().equals(user)) {
-            return new Query(permissions.evaluatorFor(caller, application), Scope.ALL);
+            return new Query(permissions.evaluatorFor(caller, application, context.tenantId()), Scope.ALL);
         }
-        access.requireAnywhere(caller, AccessGuard.PERMISSIONS_READ);
+        access.requireCanSeeOthers(caller, AccessGuard.PERMISSIONS_READ);
         UserAccount subject = directory.findByUsername(user);
         Scope scope = access.readScope(caller, subject, AccessGuard.PERMISSIONS_READ);
-        return new Query(permissions.evaluatorFor(subject, application), scope);
+        return new Query(permissions.evaluatorFor(subject, application, context.tenantId()), scope);
     }
 
     /** {@code limits} is null for permissions without limits. */

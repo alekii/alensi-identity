@@ -1,5 +1,6 @@
 package io.alensi.identity.acl;
 
+import io.alensi.identity.tenant.Tenant;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -28,13 +29,28 @@ public class TargetType {
     @JoinColumn(name = "parent_id")
     private TargetType parent;
 
+    /** The tenant that defined this type, or {@code null} for a type shared by all tenants. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "tenant_id")
+    private Tenant tenant;
+
     protected TargetType() {
     }
 
-    public TargetType(String code, String name, TargetType parent) {
+    public TargetType(String code, String name, TargetType parent, Tenant tenant) {
         this.code = code;
         this.name = name;
         this.parent = parent;
+        this.tenant = tenant;
+    }
+
+    public Tenant getTenant() {
+        return tenant;
+    }
+
+    /** Usable in the tenant: shared, or defined by it. */
+    public boolean isAvailableIn(Tenant candidate) {
+        return tenant == null || tenant.getId().equals(candidate.getId());
     }
 
     public Long getId() {

@@ -24,6 +24,8 @@ public class AuditEvent {
 
     private UUID actorId;
 
+    private Long tenantId;
+
     @Column(nullable = false)
     private String action;
 
@@ -35,8 +37,9 @@ public class AuditEvent {
     protected AuditEvent() {
     }
 
-    AuditEvent(UUID actorId, String action, String subject, String details) {
+    AuditEvent(UUID actorId, Long tenantId, String action, String subject, String details) {
         this.actorId = actorId;
+        this.tenantId = tenantId;
         this.action = action;
         this.subject = subject;
         this.details = details;
@@ -52,6 +55,10 @@ public class AuditEvent {
 
     public UUID getActorId() {
         return actorId;
+    }
+
+    public Long getTenantId() {
+        return tenantId;
     }
 
     public String getAction() {

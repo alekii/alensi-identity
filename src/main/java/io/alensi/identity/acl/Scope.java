@@ -15,6 +15,16 @@ public record Scope(boolean wildcard, Set<TargetNode> roots, TargetTree tree) {
         roots = Set.copyOf(roots);
     }
 
+    /** Everything covered by either scope. */
+    public Scope union(Scope other) {
+        if (wildcard || other.wildcard) {
+            return new Scope(true, Set.of(), tree != null ? tree : other.tree);
+        }
+        var combined = new java.util.LinkedHashSet<>(roots);
+        combined.addAll(other.roots);
+        return new Scope(false, combined, tree);
+    }
+
     public boolean isEmpty() {
         return !wildcard && roots.isEmpty();
     }
@@ -30,16 +40,5 @@ public record Scope(boolean wildcard, Set<TargetNode> roots, TargetTree tree) {
             return true;
         }
         return !PermissionEvaluator.WILDCARD.equals(code) && tree.find(code).map(this::covers).orElse(false);
-    }
-
-    /**
-     * True if a grant on the node (and its descendants) touches the scope: the node is inside it, or
-     * sits above one of its roots. A {@code null} node is a wildcard grant, which touches any non-empty scope.
-     */
-    public boolean overlaps(TargetNode node) {
-        if (node == null || wildcard) {
-            return !isEmpty();
-        }
-        return covers(node) || roots.stream().anyMatch(root -> tree.ancestorsOrSelf(root).contains(node));
     }
 }

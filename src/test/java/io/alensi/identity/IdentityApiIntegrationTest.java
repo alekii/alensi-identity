@@ -56,6 +56,7 @@ class IdentityApiIntegrationTest {
             given(keycloak.findById(user.id())).willReturn(Optional.of(user));
             given(keycloak.findByUsername(user.username())).willReturn(Optional.of(user));
         }
+        given(keycloak.findOrganizationId(org.mockito.ArgumentMatchers.anyString())).willReturn(Optional.of("org-id"));
     }
 
     @Test
@@ -82,12 +83,12 @@ class IdentityApiIntegrationTest {
                 {"code": "country", "name": "Country"}""").andExpect(status().isCreated());
         send(ADMIN, post("/api/target-types"), """
                 {"code": "city", "name": "City", "parent": "country"}""").andExpect(status().isCreated());
-        send(ADMIN, post("/api/targets"), """
-                {"code": "KE", "name": "Kenya", "type": "country"}""").andExpect(status().isCreated());
+        send(ADMIN, post("/api/tenants"), """
+                {"code": "KE", "name": "Kenya", "rootType": "country"}""").andExpect(status().isCreated());
         send(ADMIN, post("/api/targets"), """
                 {"code": "NBO", "name": "Nairobi", "type": "city", "parent": "KE"}""").andExpect(status().isCreated());
-        send(ADMIN, post("/api/targets"), """
-                {"code": "UG", "name": "Uganda", "type": "country"}""").andExpect(status().isCreated());
+        send(ADMIN, post("/api/tenants"), """
+                {"code": "UG", "name": "Uganda", "rootType": "country"}""").andExpect(status().isCreated());
         send(ADMIN, post("/api/targets"), """
                 {"code": "KLA", "name": "Kampala", "type": "city"}""").andExpect(status().isBadRequest());
 

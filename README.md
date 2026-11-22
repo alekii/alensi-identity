@@ -33,9 +33,13 @@ This project is focused entirely on security and explores how to build reliable 
 
 | Component | Responsibility |
 |---|---|
-| **Keycloak 26.8** (realm `alensi`) | Authentication: passwords, MFA, passkeys, social/enterprise login, sessions. Issues **lightweight access tokens** carrying only `iss`, `sub`, `aud`, `azp`, `sid`, `exp`, with no roles or profile data. |
+| **Keycloak 26.8** (realm `alensi`) | Authentication: passwords, MFA, passkeys, social/enterprise login, sessions. One **Organization per tenant**. Issues **lightweight access tokens** carrying only `iss`, `sub`, `aud`, `azp`, `sid`, `exp`, plus `organization` when a tenant is selected (`scope=organization:<alias>`). No roles or profile data. |
 | **alensi-identity** (this service) | Authorization: users, applications, permissions, roles, the target hierarchy and grants. Verifies tokens locally against the realm JWKS. |
 | **Postgres** | ACL data (`alensi_identity` database) and Keycloak's own database. |
+
+### Tenancy
+
+Each customer organization (e.g. an insurer) is a **tenant**, backed by a Keycloak Organization in the shared realm. A person can be a member of several tenants, each membership with its own status and expiry. Targets, grants and audit events carry `tenant_id`, enforced by composite foreign keys; roles and target types are either shared or owned by a tenant. A request acts in the tenant named by the token's `organization` claim or the `X-Alensi-Tenant` header, and the caller must be an active member. See [docs/access-model-insurance.md](docs/access-model-insurance.md#2-tenancy) for the reasoning.
 
 ### ACL model
 
@@ -57,7 +61,7 @@ The service authorizes its own API with the same model, through the seeded `alen
 | `service` | `*` | Read any user's profile and permissions (backend services checking permissions for a user) |
 
 Admin rules:
-- A role's **assignable roles** decide what its holders may grant or revoke, and only on targets inside the one their admin role was granted on.
+- A role's **assignable roles** decide what its holders may grant or revoke, and only on targets inside the one the role was granted on. Any role in any application can have them, so management chains are data. They are **transitive**: a manager can do whatever the roles below them can. Chains must not loop.
 - Nobody changes their own access.
 - Suspending a user requires scope over every grant that user holds.
 - Reading another user's access is clipped to the caller's scope.
@@ -72,9 +76,13 @@ Platform admins can add further admin levels, e.g. `team-admin`. See [docs/acces
 
 | Method | Path | Purpose |
 |---|---|---|
+| GET/POST | `/api/tenants` | List your tenants / onboard a tenant: root target and Keycloak Organization (platform) |
+| GET/POST | `/api/tenants/{tenant}/members` | Members (tenant admins) |
+| PUT/DELETE | `/api/tenants/{tenant}/members/{username}` | Suspend, reactivate or set expiry of a membership / remove it with all its grants |
+| GET | `/api/tenants/{tenant}/audit-events` | The tenant's audit trail (tenant admins) |
 | GET | `/api/users/me` | Caller's profile |
 | GET | `/api/users/username/{username}`, `/api/users/id/{id}` | Profile (`identity.users.read`) |
-| PUT | `/api/users/username/{username}/access` | Suspend, reactivate or set expiry (scope over all of the user's grants) |
+| PUT | `/api/users/username/{username}/access` | Suspend or reactivate a whole account across all tenants (platform-only) |
 | GET | `/api/users/{user}/applications/{app}/permissions?targetCode=&targetType=&compressed=` | Permission map `type -> target -> [permissions]` |
 | GET | `/api/users/{user}/applications/{app}/permissions/{permission}` | `{"allowed": bool}` on any target |
 | GET | `/api/users/{user}/applications/{app}/permissions/{permission}/targets/{target}?amount=&currency=` | `{"allowed": bool, "limits": [...]}` on a target (inherits from ancestors; limits only for limited permissions) |
@@ -108,7 +116,7 @@ TOKEN=$(curl -s http://localhost:8180/realms/alensi/protocol/openid-connect/toke
 curl -s localhost:8090/api/users/me -H "Authorization: Bearer $TOKEN"
 ```
 
-Any Keycloak client that calls this service needs two protocol mappers, both with *Add to lightweight access token* enabled: an **audience** mapper for `alensi-identity`, and a **subject (`sub`)** mapper. Keycloak 26.8 drops `sub` from lightweight tokens by default.
+Any Keycloak client that calls this service needs three protocol mappers, all with *Add to lightweight access token* enabled: an **audience** mapper for `alensi-identity`, a **subject (`sub`)** mapper (Keycloak 26.8 drops `sub` from lightweight tokens by default), and an **organization membership** mapper. The client also needs `organization` as an optional client scope. The `alensi-identity` service account needs realm-management `view-users`, `query-users`, `manage-organizations` and `manage-users`; Keycloak requires the last one to add organization members.
 
 ## Status
 

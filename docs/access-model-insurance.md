@@ -19,10 +19,26 @@ retail, agency force, bancassurance (staff inside partner banks) and brokers.
 Underwriting, claims and finance are usually central functions working across all
 branches.
 
-## 2. Target hierarchy
+## 2. Tenancy
 
-Each insurer is a **company** target at the top of its own subtree. This also gives
-tenant isolation: a grant inside Jubilee's subtree can never reach Madison's data.
+Each insurer is a **tenant**.
+
+| Decision | Choice | Why |
+|---|---|---|
+| Keycloak layout | **One `alensi` realm, one Keycloak Organization per tenant.** Not realm-per-tenant, and never `master`. | One person can work for several insurers with one login, one MFA and one passkey, and picks the insurer at login. One issuer and key set. Each insurer can still bring its own IdP (e.g. Entra ID) and email-domain routing. `tenants.keycloak_realm` leaves room to move a tenant to a dedicated realm if a regulator ever demands it. |
+| Client ids | **Per application, shared by all tenants** (`alensi-web`, `alensi-insure-…`). Per-tenant clients only for integrations an insurer owns. | A client represents an app, not a customer. The tenant comes from the organization the user picked. |
+| Tenant in the token | `scope=organization:<alias>` puts exactly that tenant in the token: `"organization": ["jub"]`. Requires the org mapper on the client with *Add to lightweight access token*. | Keeps tokens lightweight (one short claim). Verified on Keycloak 26.8. |
+| Membership | `tenant_members`: a person can belong to many tenants, each membership with **its own status and expiry**. | Jubilee suspending a broker does not touch their Madison access. |
+| Isolation | `tenant_id` on targets (required), roles and target types (null means shared), grants and audit events. **Composite foreign keys** make the database guarantee that a grant's target and membership are in the grant's tenant. | Isolation does not depend on every code path remembering to filter. |
+
+Each request acts in one tenant: the token's `organization` claim, else the
+`X-Alensi-Tenant` header, else the caller's only active membership. It must always be a
+tenant the caller is an active member of.
+
+## 3. Target hierarchy
+
+Each tenant has exactly one root target, created with the tenant. A grant inside
+Jubilee's subtree can never reach Madison's data.
 
 ```
 * (platform)
@@ -138,6 +154,31 @@ per currency for each limited permission:
 - Platform admins set limits on platform roles; company admins set limits on their own
   company's roles.
 
+### Management chains are data
+
+Any role, in any application, can list the roles its holders may assign. That is what
+makes it a manager role. A tenant builds its own chain from its own roles and target
+types, e.g. Jubilee's Mt Kenya area:
+
+```
+area-manager    on JUB-KE-CEN-MTK          assigns → agency-manager
+agency-manager  on JUB-KE-CEN-MTK-NYR      assigns → sales-manager
+sales-manager   on JUB-KE-CEN-MTK-NYR      assigns → unit-lead
+unit-lead       on JUB-KE-CEN-MTK-NYR-S1   assigns → agent
+```
+
+- **Each level can do anything the levels below it can**, inside its subtree. Assignable
+  roles are transitive: an area manager can directly appoint or revoke agency managers,
+  sales managers, unit leads and agents in Mt Kenya. Nobody can create peers or superiors,
+  or change their own access.
+- Chains must be a hierarchy: configuring a loop (e.g. `unit-lead` → `area-manager`) is
+  rejected, since it would let a unit lead appoint their own superiors.
+- A manager can see the access of the people working **inside** their subtree (clipped to
+  it), and suspend their membership if they could revoke every grant that person holds in
+  the tenant. They can never see upwards: a unit lead cannot inspect their sales manager
+  or a platform admin.
+- `area` and `agency` are Jubilee's own target types. Madison neither sees nor can use them.
+
 ### Agent ranks
 
 Agent ranks are business roles granted on the same team target. They differ in
@@ -211,9 +252,12 @@ audited business grant.
 | 5 | Grants have no `valid_from` / `valid_until` (acting cover during leave). | Missing |
 | 6 | Admins can't onboard staff (create the Keycloak user and send the invite). | Missing |
 | 7 | No "list users in my scope" endpoint for managers. | Missing |
-| 9 | Per-insurer roles and limits. | **Done** (V4) |
+| 9 | Per-insurer roles and limits. | **Done** (V4); now tenant-owned (V5) |
+| 12 | Explicit tenants, Keycloak Organizations, multi-tenant membership, per-tenant suspension and audit. | **Done** (V5) |
+| 13 | Management chains configured as data; tenant-defined target types. | **Done** (V5) |
+| 14 | Postgres row-level security as a second line of defence for `tenant_id`. | Next |
 | 11 | Platform-wide admin roles' assignable lists are shared. A company that wants its regional admins to assign its own roles creates a company-owned admin role (e.g. a Jubilee regional admin) instead. | By design |
-| 10 | The audit log is platform-only; company admins can't yet see their own company's audit trail. | Missing |
+| 10 | Tenant audit trail for tenant admins: `/api/tenants/{tenant}/audit-events`. | **Done** (V5) |
 | 8 | Customers and policyholders logging in need ownership-based access (their own policies). That belongs in insure, but customer accounts need a separate Keycloak realm or group so they never receive staff roles. | Design decision |
 
 ## Sources

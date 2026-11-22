@@ -3,6 +3,7 @@ package io.alensi.identity.acl;
 import java.time.Instant;
 import java.util.UUID;
 
+import io.alensi.identity.tenant.Tenant;
 import io.alensi.identity.user.UserAccount;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -38,6 +39,11 @@ public class RoleGrant {
     @JoinColumn(name = "target_id")
     private Target target;
 
+    /** The target's tenant; {@code null} for wildcard (platform) grants. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "tenant_id")
+    private Tenant tenant;
+
     private UUID grantedBy;
 
     @CreationTimestamp
@@ -50,7 +56,12 @@ public class RoleGrant {
         this.user = user;
         this.role = role;
         this.target = target;
+        this.tenant = target == null ? null : target.getTenant();
         this.grantedBy = grantedBy;
+    }
+
+    public Tenant getTenant() {
+        return tenant;
     }
 
     public boolean isWildcard() {

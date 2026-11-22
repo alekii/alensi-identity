@@ -38,7 +38,7 @@ class UserController {
     @GetMapping("/id/{id}")
     UserProfile byId(UserAccount caller, @PathVariable UUID id) {
         if (!caller.getId().equals(id)) {
-            access.requireAnywhere(caller, AccessGuard.USERS_READ);
+            access.requireCanSeeOthers(caller, AccessGuard.USERS_READ);
         }
         UserAccount subject = directory.findById(id);
         access.readScope(caller, subject, AccessGuard.USERS_READ);
@@ -48,7 +48,7 @@ class UserController {
     @GetMapping("/username/{username}")
     UserProfile byUsername(UserAccount caller, @PathVariable String username) {
         if (!caller.getUsername().equals(username)) {
-            access.requireAnywhere(caller, AccessGuard.USERS_READ);
+            access.requireCanSeeOthers(caller, AccessGuard.USERS_READ);
         }
         UserAccount subject = directory.findByUsername(username);
         access.readScope(caller, subject, AccessGuard.USERS_READ);
@@ -56,16 +56,15 @@ class UserController {
     }
 
     /**
-     * Suspends/reactivates an account or sets its expiry. Takes effect on the next request. Only
-     * allowed for admins whose scope covers every grant the user holds.
+     * Suspends/reactivates a whole account across every tenant, or sets its expiry. Platform-only;
+     * tenants suspend their own memberships via {@code /api/tenants/{tenant}/members/{username}}.
      */
     @PutMapping("/username/{username}/access")
     @Transactional
     UserProfile updateAccess(UserAccount caller, @PathVariable String username,
             @Valid @RequestBody AccessUpdate update) {
-        access.requireAnywhere(caller, AccessGuard.USERS_MANAGE);
+        access.requirePlatform(caller);
         UserAccount user = directory.findByUsername(username);
-        access.requireAccountManagement(caller, user);
         user.setStatus(update.status());
         user.setExpiresAt(update.expiresAt());
         users.save(user);

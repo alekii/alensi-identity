@@ -3,6 +3,7 @@ package io.alensi.identity.acl;
 import java.util.HashSet;
 import java.util.Set;
 
+import io.alensi.identity.tenant.Tenant;
 import jakarta.persistence.CollectionTable;
 import jakarta.persistence.ElementCollection;
 
@@ -37,10 +38,10 @@ public class Role {
     @Column(nullable = false)
     private String name;
 
-    /** The company (top-level target) that owns this role, or {@code null} for a platform-wide role. */
+    /** The tenant that owns this role, or {@code null} for a role shared by all tenants. */
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "owner_target_id")
-    private Target owner;
+    @JoinColumn(name = "tenant_id")
+    private Tenant tenant;
 
     @ManyToMany
     @JoinTable(name = "role_permissions",
@@ -62,16 +63,16 @@ public class Role {
     protected Role() {
     }
 
-    public Role(Application application, String code, String name, Set<Permission> permissions, Target owner) {
+    public Role(Application application, String code, String name, Set<Permission> permissions, Tenant tenant) {
         this.application = application;
         this.code = code;
         this.name = name;
         this.permissions = new HashSet<>(permissions);
-        this.owner = owner;
+        this.tenant = tenant;
     }
 
-    public boolean isPlatformWide() {
-        return owner == null;
+    public boolean isShared() {
+        return tenant == null;
     }
 
     public Long getId() {
@@ -94,8 +95,8 @@ public class Role {
         return permissions;
     }
 
-    public Target getOwner() {
-        return owner;
+    public Tenant getTenant() {
+        return tenant;
     }
 
     public Set<RoleLimit> getLimits() {
