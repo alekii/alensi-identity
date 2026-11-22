@@ -11,6 +11,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import io.alensi.identity.tenant.Tenant;
 import org.hibernate.annotations.CreationTimestamp;
 
 /** Something permissions are scoped to (a country, a shop, a merchant...). Targets form a tree. */
@@ -36,17 +37,32 @@ public class Target {
     @JoinColumn(name = "parent_id")
     private Target parent;
 
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "tenant_id")
+    private Tenant tenant;
+
     @CreationTimestamp
     private Instant createdAt;
 
     protected Target() {
     }
 
-    public Target(TargetType type, String code, String name, Target parent) {
+    /** A tenant's root target. */
+    public Target(Tenant tenant, TargetType type, String code, String name) {
+        this.tenant = tenant;
         this.type = type;
         this.code = code;
         this.name = name;
+    }
+
+    /** A target below {@code parent}, in the same tenant. */
+    public Target(TargetType type, String code, String name, Target parent) {
+        this(parent.getTenant(), type, code, name);
         this.parent = parent;
+    }
+
+    public Tenant getTenant() {
+        return tenant;
     }
 
     public Long getId() {

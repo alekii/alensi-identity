@@ -80,7 +80,25 @@
             "introspection.token.claim": "true",
             "lightweight.claim": "true"
           }
+        },
+        {
+          "name": "organization",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-organization-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "introspection.token.claim": "true",
+            "lightweight.claim": "true",
+            "claim.name": "organization",
+            "multivalued": "true",
+            "jsonType.label": "String"
+          }
         }
+      ],
+      "optionalClientScopes": [
+        "organization",
+        "offline_access"
       ]
     },
     {
@@ -123,7 +141,25 @@
             "introspection.token.claim": "true",
             "lightweight.claim": "true"
           }
+        },
+        {
+          "name": "organization",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-organization-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "introspection.token.claim": "true",
+            "lightweight.claim": "true",
+            "claim.name": "organization",
+            "multivalued": "true",
+            "jsonType.label": "String"
+          }
         }
+      ],
+      "optionalClientScopes": [
+        "organization",
+        "offline_access"
       ]
     }
   ],
@@ -165,7 +201,9 @@
       "clientRoles": {
         "realm-management": [
           "view-users",
-          "query-users"
+          "query-users",
+          "manage-users",
+          "manage-organizations"
         ]
       }
     },
@@ -174,5 +212,6 @@
       "enabled": true,
       "serviceAccountClientId": "alensi-demo-service"
     }
-  ]
+  ],
+  "organizationsEnabled": true
 }

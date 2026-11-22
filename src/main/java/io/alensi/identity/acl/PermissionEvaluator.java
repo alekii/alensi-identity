@@ -91,12 +91,34 @@ public final class PermissionEvaluator {
     }
 
     /**
-     * True if the user may assign the role on the target (or on all targets when {@code target} is
-     * null): a grant carrying {@code managePermission} lists the role as assignable and covers the target.
+     * Where the user manages people: the targets of grants whose role lists assignable roles. A
+     * branch manager whose role may assign sales managers manages that branch's subtree.
      */
-    public boolean canAssign(String managePermission, long roleId, TargetNode target) {
+    public Scope managementScope() {
+        boolean wildcard = false;
+        Set<TargetNode> roots = new LinkedHashSet<>();
+        for (EffectiveGrant grant : grants) {
+            if (!grant.assignableRoleIds().isEmpty()) {
+                if (grant.isWildcard()) {
+                    wildcard = true;
+                }
+                else {
+                    roots.add(grant.target());
+                }
+            }
+        }
+        return new Scope(wildcard, wildcard ? Set.of() : roots, tree);
+    }
+
+    /**
+     * True if the user may assign the role on the target (or on all targets when {@code target} is
+     * null): one of their grants covers the target and can reach the role down its chain of
+     * assignable roles. Any role can carry an assignable list, so management chains (area manager →
+     * branch manager → sales manager → team lead → agent) are configured as data, and each level can
+     * do whatever the levels below it can.
+     */
+    public boolean canAssign(long roleId, TargetNode target) {
         return grants.stream()
-                .filter(grant -> grant.permissions().contains(managePermission))
                 .filter(grant -> grant.assignableRoleIds().contains(roleId))
                 .anyMatch(grant -> grant.isWildcard()
                         || target != null && tree.ancestorsOrSelf(target).contains(grant.target()));

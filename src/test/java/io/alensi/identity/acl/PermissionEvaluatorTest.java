@@ -10,11 +10,11 @@ import org.junit.jupiter.api.Test;
 class PermissionEvaluatorTest {
 
     // KE (country) > NBO (city) > NBO-WEST (shop);  UG (country) > KLA (city)
-    private static final TargetNode KE = new TargetNode(1, "KE", "Kenya", "country", null);
-    private static final TargetNode NBO = new TargetNode(2, "NBO", "Nairobi", "city", 1L);
-    private static final TargetNode NBO_WEST = new TargetNode(3, "NBO-WEST", "Westlands", "shop", 2L);
-    private static final TargetNode UG = new TargetNode(4, "UG", "Uganda", "country", null);
-    private static final TargetNode KLA = new TargetNode(5, "KLA", "Kampala", "city", 4L);
+    private static final TargetNode KE = new TargetNode(1, "KE", "Kenya", "country", null, 1);
+    private static final TargetNode NBO = new TargetNode(2, "NBO", "Nairobi", "city", 1L, 1);
+    private static final TargetNode NBO_WEST = new TargetNode(3, "NBO-WEST", "Westlands", "shop", 2L, 1);
+    private static final TargetNode UG = new TargetNode(4, "UG", "Uganda", "country", null, 1);
+    private static final TargetNode KLA = new TargetNode(5, "KLA", "Kampala", "city", 4L, 1);
 
     private static final TargetTree TREE = new TargetTree(List.of(KE, NBO, NBO_WEST, UG, KLA));
 

@@ -3,7 +3,9 @@ package io.alensi.identity.acl;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Predicate;
 
+import io.alensi.identity.tenant.TenantContext;
 import io.alensi.identity.user.AccessGuard;
 import io.alensi.identity.user.UserAccount;
 import io.alensi.identity.user.UserDirectory;
@@ -79,53 +81,52 @@ class AclAdminController {
     }
 
     @GetMapping("/applications/{application}/roles")
-    List<AclViews.RoleView> roles(UserAccount caller, @PathVariable String application) {
-        Set<String> companies = access.visibleCompanies(caller);
-        return catalog.roles(application).stream()
-                .filter(role -> role.owner() == null || companies == null || companies.contains(role.owner()))
-                .toList();
+    List<AclViews.RoleView> roles(UserAccount caller, TenantContext context, @PathVariable String application) {
+        Predicate<String> visible = visibleTenants(caller, context);
+        return catalog.roles(application).stream().filter(role -> role.tenant() == null || visible.test(role.tenant())).toList();
     }
 
     @PostMapping("/applications/{application}/roles")
     @ResponseStatus(HttpStatus.CREATED)
     AclViews.RoleView createRole(UserAccount caller, @PathVariable String application,
             @Valid @RequestBody NewRole body) {
-        return admin.createRole(caller, application, body.code(), body.name(), body.permissions(), body.owner(),
+        return admin.createRole(caller, application, body.code(), body.name(), body.permissions(), body.tenant(),
                 limits(body.limits()));
     }
 
-    /** {@code owner} selects a company-owned role; omit it for platform-wide roles. */
+    /**
+     * Sets which roles holders of a role may assign, making it a manager role. {@code tenant} selects
+     * a tenant-owned role; omit it for shared roles.
+     */
     @PutMapping("/applications/{application}/roles/{role}/assignable-roles")
     AclViews.RoleView setAssignableRoles(UserAccount caller, @PathVariable String application,
-            @PathVariable String role, @RequestParam(required = false) String owner,
+            @PathVariable String role, @RequestParam(required = false) String tenant,
             @Valid @RequestBody AssignableRoles body) {
-        return admin.setAssignableRoles(caller, application, role, owner, body.roles());
+        return admin.setAssignableRoles(caller, application, role, tenant, body.roles());
     }
 
     @PutMapping("/applications/{application}/roles/{role}/limits")
     AclViews.RoleView setLimits(UserAccount caller, @PathVariable String application, @PathVariable String role,
-            @RequestParam(required = false) String owner, @Valid @RequestBody Limits body) {
-        return admin.setLimits(caller, application, role, owner, limits(body.limits()));
+            @RequestParam(required = false) String tenant, @Valid @RequestBody Limits body) {
+        return admin.setLimits(caller, application, role, tenant, limits(body.limits()));
     }
 
     @GetMapping("/target-types")
-    List<AclViews.TargetTypeView> targetTypes(UserAccount caller) {
-        return catalog.targetTypes();
+    List<AclViews.TargetTypeView> targetTypes(UserAccount caller, TenantContext context) {
+        Predicate<String> visible = visibleTenants(caller, context);
+        return catalog.targetTypes().stream().filter(type -> type.tenant() == null || visible.test(type.tenant())).toList();
     }
 
     @PostMapping("/target-types")
     @ResponseStatus(HttpStatus.CREATED)
     AclViews.TargetTypeView createTargetType(UserAccount caller, @Valid @RequestBody NewTargetType body) {
-        access.requirePlatform(caller);
-        return admin.createTargetType(caller, body.code(), body.name(), body.parent());
+        return admin.createTargetType(caller, body.code(), body.name(), body.parent(), body.tenant());
     }
 
     @GetMapping("/targets")
-    List<AclViews.TargetView> targets(UserAccount caller) {
-        Set<String> companies = access.visibleCompanies(caller);
-        return catalog.targets().stream()
-                .filter(target -> companies == null || companies.contains(target.company()))
-                .toList();
+    List<AclViews.TargetView> targets(UserAccount caller, TenantContext context) {
+        Predicate<String> visible = visibleTenants(caller, context);
+        return catalog.targets().stream().filter(target -> visible.test(target.tenant())).toList();
     }
 
     @PostMapping("/targets")
@@ -137,7 +138,7 @@ class AclAdminController {
     @GetMapping("/users/{username}/grants")
     List<AclViews.GrantView> grants(UserAccount caller, @PathVariable String username) {
         if (!caller.getUsername().equals(username)) {
-            access.requireAnywhere(caller, AccessGuard.PERMISSIONS_READ);
+            access.requireCanSeeOthers(caller, AccessGuard.PERMISSIONS_READ);
         }
         UserAccount subject = directory.findByUsername(username);
         Scope scope = access.readScope(caller, subject, AccessGuard.PERMISSIONS_READ);
@@ -147,14 +148,14 @@ class AclAdminController {
     @PostMapping("/users/{username}/grants")
     @ResponseStatus(HttpStatus.CREATED)
     AclViews.GrantView grant(UserAccount caller, @PathVariable String username, @Valid @RequestBody NewGrant body) {
-        access.requireAnywhere(caller, AccessGuard.USERS_MANAGE);
+        access.requireCanSeeOthers(caller, AccessGuard.ROLES_MANAGE);
         return admin.grant(caller, directory.findByUsername(username), body.application(), body.role(), body.target());
     }
 
     @DeleteMapping("/users/{username}/grants/{grantId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     void revoke(UserAccount caller, @PathVariable String username, @PathVariable long grantId) {
-        access.requireAnywhere(caller, AccessGuard.USERS_MANAGE);
+        access.requireCanSeeOthers(caller, AccessGuard.ROLES_MANAGE);
         admin.revoke(caller, directory.findByUsername(username), grantId);
     }
 
@@ -171,9 +172,9 @@ class AclAdminController {
         }
     }
 
-    /** {@code owner} makes the role private to a company (top-level target); omit for platform-wide roles. */
+    /** {@code tenant} makes the role private to a tenant; omit it for shared roles (platform-only). */
     record NewRole(@NotBlank @Size(max = 64) @Pattern(regexp = CODE) String code,
-            @NotBlank @Size(max = 255) String name, @NotEmpty Set<@NotBlank String> permissions, String owner,
+            @NotBlank @Size(max = 255) String name, @NotEmpty Set<@NotBlank String> permissions, String tenant,
             List<@Valid LimitBody> limits) {
     }
 
@@ -185,12 +186,22 @@ class AclAdminController {
             @PositiveOrZero BigDecimal maxAmount) {
     }
 
+    /** {@code tenant} makes the type private to a tenant; omit it for shared types (platform-only). */
     record NewTargetType(@NotBlank @Size(max = 64) @Pattern(regexp = CODE) String code,
-            @NotBlank @Size(max = 255) String name, String parent) {
+            @NotBlank @Size(max = 255) String name, String parent, String tenant) {
     }
 
     record NewTarget(@NotBlank @Size(max = 64) @Pattern(regexp = CODE) String code,
             @NotBlank @Size(max = 255) String name, @NotBlank String type, String parent) {
+    }
+
+    /** The request's tenant if one was chosen, else every tenant the caller works in. */
+    private Predicate<String> visibleTenants(UserAccount caller, TenantContext context) {
+        if (context.tenant() != null) {
+            return context.tenantCode()::equals;
+        }
+        Set<String> tenants = access.visibleTenants(caller);
+        return tenants == null ? tenant -> true : tenants::contains;
     }
 
     private static List<AclAdminService.LimitSpec> limits(List<LimitBody> limits) {

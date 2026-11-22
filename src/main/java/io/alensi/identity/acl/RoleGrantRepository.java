@@ -25,8 +25,9 @@ public interface RoleGrantRepository extends JpaRepository<RoleGrant, Long> {
             select g from RoleGrant g
               join fetch g.role r
               join fetch r.application
-              left join fetch r.owner
+              left join fetch r.tenant
               left join fetch g.target
+              left join fetch g.tenant
             where g.user = :user
             order by g.id
             """)

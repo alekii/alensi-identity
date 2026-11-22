@@ -28,11 +28,10 @@ public final class AclViews {
     }
 
     /**
-     * {@code owner} is the company owning the role ({@code null} for platform-wide roles).
-     * {@code assignableRoles} are {@code application/role} references, suffixed {@code @company} for
-     * company-owned roles.
+     * {@code tenant} owns the role ({@code null} for shared roles). {@code assignableRoles} are
+     * {@code application/role} references, suffixed {@code @tenant} for tenant-owned roles.
      */
-    public record RoleView(String code, String name, String owner, SortedSet<String> permissions,
+    public record RoleView(String code, String name, String tenant, SortedSet<String> permissions,
             SortedSet<String> assignableRoles, List<Limit> limits) {
 
         static RoleView of(Role role) {
@@ -44,46 +43,44 @@ public final class AclViews {
                     .map(limit -> new Limit(limit.getPermission().getCode(), limit.getCurrency(), limit.getMaxAmount()))
                     .sorted(Comparator.comparing(Limit::permission).thenComparing(Limit::currency))
                     .toList();
-            return new RoleView(role.getCode(), role.getName(), ownerCode(role), codes, assignable, limits);
+            return new RoleView(role.getCode(), role.getName(), tenantCode(role), codes, assignable, limits);
         }
 
         static String reference(Role role) {
             String ref = role.getApplication().getCode() + "/" + role.getCode();
-            return role.isPlatformWide() ? ref : ref + "@" + role.getOwner().getCode();
+            return role.isShared() ? ref : ref + "@" + role.getTenant().getCode();
         }
 
-        static String ownerCode(Role role) {
-            return role.isPlatformWide() ? null : role.getOwner().getCode();
+        static String tenantCode(Role role) {
+            return role.isShared() ? null : role.getTenant().getCode();
         }
     }
 
-    public record TargetTypeView(String code, String name, String parent) {
+    /** {@code tenant} is null for types shared by all tenants. */
+    public record TargetTypeView(String code, String name, String parent, String tenant) {
 
         static TargetTypeView of(TargetType type) {
             return new TargetTypeView(type.getCode(), type.getName(),
-                    type.getParent() == null ? null : type.getParent().getCode());
+                    type.getParent() == null ? null : type.getParent().getCode(),
+                    type.getTenant() == null ? null : type.getTenant().getCode());
         }
     }
 
-    /** {@code company} is the target's top-level ancestor (itself for a company). */
-    public record TargetView(String code, String name, String type, String parent, String company) {
+    public record TargetView(String code, String name, String type, String parent, String tenant) {
 
         static TargetView of(Target target) {
-            Target company = target;
-            while (company.getParent() != null) {
-                company = company.getParent();
-            }
             return new TargetView(target.getCode(), target.getName(), target.getType().getCode(),
-                    target.getParent() == null ? null : target.getParent().getCode(), company.getCode());
+                    target.getParent() == null ? null : target.getParent().getCode(), target.getTenant().getCode());
         }
     }
 
-    public record GrantView(Long id, String application, String role, String roleOwner, String target,
+    /** {@code tenant} is the grant's tenant (null for platform grants on {@code *}). */
+    public record GrantView(Long id, String tenant, String application, String role, String target,
             UUID grantedBy, Instant createdAt) {
 
         static GrantView of(RoleGrant grant) {
-            return new GrantView(grant.getId(), grant.getRole().getApplication().getCode(), grant.getRole().getCode(),
-                    RoleView.ownerCode(grant.getRole()),
+            return new GrantView(grant.getId(), grant.getTenant() == null ? null : grant.getTenant().getCode(),
+                    grant.getRole().getApplication().getCode(), grant.getRole().getCode(),
                     grant.isWildcard() ? PermissionEvaluator.WILDCARD : grant.getTarget().getCode(),
                     grant.getGrantedBy(), grant.getCreatedAt());
         }

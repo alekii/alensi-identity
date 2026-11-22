@@ -62,6 +62,14 @@ class MultiInsurerAccessIntegrationTest {
     private static final KeycloakUser THIKA = user("tom");          // Thika branch manager
     private static final KeycloakUser MOMBASA = user("musa");       // Madison Mombasa agent
     private static final KeycloakUser HOC = user("hellen");         // Jubilee Kenya head of claims
+    private static final KeycloakUser SAM = user("sam");            // Jubilee agent, promoted to Jubilee's senior-agent
+    private static final KeycloakUser BRIAN = user("brian");        // agent for both Jubilee and Madison
+    // Jubilee's own management chain in its Mt Kenya area
+    private static final KeycloakUser ARTHUR = user("arthur");      // area manager
+    private static final KeycloakUser BELLA = user("bella");        // agency manager
+    private static final KeycloakUser SID = user("sid");            // sales manager
+    private static final KeycloakUser LUCY = user("lucy");          // unit lead
+    private static final KeycloakUser AGGIE = user("aggie");        // agent
 
     private static boolean seeded;
 
@@ -73,10 +81,12 @@ class MultiInsurerAccessIntegrationTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        for (KeycloakUser user : List.of(PLATFORM, JUB_ADMIN, MAD_ADMIN, CENTRAL, MARY, TINA, ANN, THIKA, MOMBASA, HOC)) {
+        for (KeycloakUser user : List.of(PLATFORM, JUB_ADMIN, MAD_ADMIN, CENTRAL, MARY, TINA, ANN, THIKA, MOMBASA, HOC, SAM, BRIAN,
+                ARTHUR, BELLA, SID, LUCY, AGGIE)) {
             given(keycloak.findById(user.id())).willReturn(Optional.of(user));
             given(keycloak.findByUsername(user.username())).willReturn(Optional.of(user));
         }
+        given(keycloak.findOrganizationId(org.mockito.ArgumentMatchers.anyString())).willReturn(Optional.of("org-id"));
         if (!seeded) {
             seed();
             seeded = true;
@@ -119,9 +129,11 @@ class MultiInsurerAccessIntegrationTest {
                     ? "{\"code\": \"%s\", \"name\": \"%s\"}".formatted(type[0], type[0])
                     : "{\"code\": \"%s\", \"name\": \"%s\", \"parent\": \"%s\"}".formatted(type[0], type[0], type[1])));
         }
-        // Platform creates the companies and hands each to its company admin.
-        target(PLATFORM, "JUB", "company", null);
-        target(PLATFORM, "MAD", "company", null);
+        // Platform onboards the insurers as tenants and hands each to its company admin.
+        ok(send(PLATFORM, post("/api/tenants"), """
+                {"code": "JUB", "name": "Jubilee Insurance", "rootType": "company"}"""));
+        ok(send(PLATFORM, post("/api/tenants"), """
+                {"code": "MAD", "name": "Madison General", "rootType": "company"}"""));
         grant(PLATFORM, JUB_ADMIN, "alensi-identity", "company-admin", "JUB");
         grant(PLATFORM, MAD_ADMIN, "alensi-identity", "company-admin", "MAD");
 
@@ -200,8 +212,10 @@ class MultiInsurerAccessIntegrationTest {
 
     @Test
     void targetsAreCreatedOnlyInsideScope() throws Exception {
-        denied(send(JUB_ADMIN, post("/api/targets"), """
-                {"code": "ACME", "name": "Acme", "type": "company"}"""));
+        denied(send(JUB_ADMIN, post("/api/tenants"), """
+                {"code": "ACME", "name": "Acme", "rootType": "company"}"""));
+        send(PLATFORM, post("/api/targets"), """
+                {"code": "ACME", "name": "Acme", "type": "company"}""").andExpect(status().isBadRequest());
         denied(send(JUB_ADMIN, post("/api/targets"), """
                 {"code": "MAD-KE-WST", "name": "Western", "type": "region", "parent": "MAD-KE"}"""));
         denied(send(CENTRAL, post("/api/targets"), """
@@ -225,14 +239,125 @@ class MultiInsurerAccessIntegrationTest {
     }
 
     @Test
-    void accountChangesNeedScopeOverEveryGrant() throws Exception {
-        denied(send(CENTRAL, put("/api/users/username/ann/access"), suspend()));
-        denied(send(TINA, put("/api/users/username/mary/access"), suspend()));
-        denied(send(MARY, put("/api/users/username/mary/access"), suspend()));
-        ok(send(MARY, put("/api/users/username/ann/access"), suspend()));
+    void membershipChangesNeedScopeOverEveryGrantInTheTenant() throws Exception {
+        denied(send(CENTRAL, put("/api/tenants/JUB/members/ann"), suspend()));
+        denied(send(TINA, put("/api/tenants/JUB/members/mary"), suspend()));
+        denied(send(MARY, put("/api/tenants/JUB/members/mary"), suspend()));
+        denied(send(JUB_ADMIN, put("/api/users/username/ann/access"), suspend())); // whole-account: platform only
+        ok(send(MARY, put("/api/tenants/JUB/members/ann"), suspend()));
         allowed(MARY, "ann", "policies.sell", "JUB-KE-NRB-NWS-T1", false);
-        ok(send(MARY, put("/api/users/username/ann/access"), """
+        ok(send(MARY, put("/api/tenants/JUB/members/ann"), """
                 {"status": "ACTIVE"}"""));
+    }
+
+    // ---- Management chains configured as data ----
+
+    @Test
+    void tenantsConfigureTheirOwnManagementChains() throws Exception {
+        // Jubilee adds an "area" level under its regions, with its own agency and sales-team levels below.
+        tenantType("area", "region");
+        tenantType("agency", "area");
+        tenantType("sales-team", "agency");
+        target(JUB_ADMIN, "JUB-KE-CEN-MTK", "area", "JUB-KE-CEN");
+        target(JUB_ADMIN, "JUB-KE-CEN-MTK-NYR", "agency", "JUB-KE-CEN-MTK");
+        target(JUB_ADMIN, "JUB-KE-CEN-MTK-NYR-S1", "sales-team", "JUB-KE-CEN-MTK-NYR");
+        // Madison neither sees nor can use Jubilee's types.
+        call(MAD_ADMIN, get("/api/target-types")).andExpect(jsonPath("$[?(@.code == 'area')]").isEmpty());
+        send(MAD_ADMIN, post("/api/targets"), """
+                {"code": "MAD-KE-CST-X", "name": "x", "type": "area", "parent": "MAD-KE-CST"}""")
+                .andExpect(status().isNotFound());
+
+        // area manager → agency manager → sales manager → unit lead → agent
+        for (String[] role : List.of(new String[] { "unit-lead", "agent" }, new String[] { "sales-manager", "unit-lead" },
+                new String[] { "agency-manager", "sales-manager" }, new String[] { "area-manager", "agency-manager" })) {
+            ok(send(JUB_ADMIN, post("/api/applications/alensi-insure/roles"),
+                    "{\"code\": \"%s\", \"name\": \"%s\", \"tenant\": \"JUB\", \"permissions\": [\"policies.view\", \"team.reports\"]}"
+                            .formatted(role[0], role[0])));
+            send(JUB_ADMIN, put("/api/applications/alensi-insure/roles/%s/assignable-roles?tenant=JUB".formatted(role[0])),
+                    "{\"roles\": [{\"application\": \"alensi-insure\", \"role\": \"%s\"}]}".formatted(role[1]))
+                    .andExpect(status().isOk());
+        }
+        grant(JUB_ADMIN, ARTHUR, "alensi-insure", "area-manager", "JUB-KE-CEN-MTK");
+        grant(ARTHUR, BELLA, "alensi-insure", "agency-manager", "JUB-KE-CEN-MTK-NYR");
+        grant(BELLA, SID, "alensi-insure", "sales-manager", "JUB-KE-CEN-MTK-NYR");
+        grant(SID, LUCY, "alensi-insure", "unit-lead", "JUB-KE-CEN-MTK-NYR-S1");
+        grant(LUCY, AGGIE, "alensi-insure", "agent", "JUB-KE-CEN-MTK-NYR-S1");
+
+        // Each level can do whatever the levels below it can, inside its subtree, but never create
+        // peers or superiors.
+        ok(send(ARTHUR, post("/api/users/sam/grants"), grantBody("alensi-insure", "agent", "JUB-KE-CEN-MTK-NYR-S1")));
+        ok(send(BELLA, post("/api/users/sam/grants"), grantBody("alensi-insure", "unit-lead", "JUB-KE-CEN-MTK-NYR-S1")));
+        denied(send(LUCY, post("/api/users/aggie/grants"), grantBody("alensi-insure", "unit-lead", "JUB-KE-CEN-MTK-NYR-S1")));
+        denied(send(SID, post("/api/users/lucy/grants"), grantBody("alensi-insure", "agency-manager", "JUB-KE-CEN-MTK-NYR")));
+        denied(send(SID, post("/api/users/lucy/grants"), grantBody("alensi-insure", "sales-manager", "JUB-KE-CEN-MTK-NYR")));
+        denied(send(ARTHUR, post("/api/users/bella/grants"), grantBody("alensi-insure", "area-manager", "JUB-KE-CEN-MTK")));
+        denied(send(BELLA, post("/api/users/tom/grants"), grantBody("alensi-insure", "sales-manager", "JUB-KE-CEN-THK")));
+        denied(send(ARTHUR, post("/api/users/tom/grants"), grantBody("alensi-insure", "agent", "JUB-KE-CEN-THK")));
+        denied(send(AGGIE, post("/api/users/sam/grants"), grantBody("alensi-insure", "agent", "JUB-KE-CEN-MTK-NYR-S1")));
+        // Chains must stay a hierarchy: a loop would let a unit lead reach their own superiors.
+        send(JUB_ADMIN, put("/api/applications/alensi-insure/roles/unit-lead/assignable-roles?tenant=JUB"), """
+                {"roles": [{"application": "alensi-insure", "role": "agent"},
+                           {"application": "alensi-insure", "role": "area-manager", "tenant": "JUB"}]}""")
+                .andExpect(status().isBadRequest());
+        send(JUB_ADMIN, put("/api/applications/alensi-insure/roles/unit-lead/assignable-roles?tenant=JUB"), """
+                {"roles": [{"application": "alensi-insure", "role": "unit-lead", "tenant": "JUB"}]}""")
+                .andExpect(status().isBadRequest());
+
+        // Managers see their people's access without any identity permission, and can suspend them in this tenant.
+        call(SID, get("/api/users/aggie/grants")).andExpect(jsonPath("$[0].role").value("agent"));
+        denied(call(LUCY, get("/api/users/sid/applications/alensi-insure/permissions")));   // not upwards
+        denied(call(LUCY, get("/api/users/admin/applications/alensi-identity/permissions"))); // nor at the platform
+        ok(send(LUCY, put("/api/tenants/JUB/members/aggie"), suspend()));
+        ok(send(LUCY, put("/api/tenants/JUB/members/aggie"), """
+                {"status": "ACTIVE"}"""));
+        // Revoking follows the same rule: any level above may revoke, the person themselves may not.
+        long aggieGrant = grantId(call(SID, get("/api/users/aggie/grants")));
+        denied(call(AGGIE, delete("/api/users/aggie/grants/" + aggieGrant)));
+        ok(call(SID, delete("/api/users/aggie/grants/" + aggieGrant)));
+    }
+
+    // ---- One person, two tenants ----
+
+    @Test
+    void personWorkingForTwoInsurersIsIsolatedPerTenant() throws Exception {
+        grant(JUB_ADMIN, BRIAN, "alensi-insure", "agent", "JUB-KE-NRB-NWS");
+        grant(MAD_ADMIN, BRIAN, "alensi-insure", "agent", "MAD-KE-CST-MSA");
+        String sells = "/api/users/me/applications/alensi-insure/permissions/policies.sell/targets?compressed=true";
+
+        // The tenant comes from the header (or the token's organization claim); each answers only for itself.
+        call(BRIAN, get(sells).header("X-Alensi-Tenant", "JUB")).andExpect(jsonPath("$").value(contains("JUB-KE-NRB-NWS")));
+        call(BRIAN, get(sells).header("X-Alensi-Tenant", "MAD")).andExpect(jsonPath("$").value(contains("MAD-KE-CST-MSA")));
+        mvc.perform(get(sells).with(jwt().jwt(token -> token.subject(BRIAN.id().toString())
+                        .claim("organization", List.of("mad")))))
+                .andExpect(jsonPath("$").value(contains("MAD-KE-CST-MSA")));
+        mvc.perform(get(sells).header("X-Alensi-Tenant", "JUB").with(jwt().jwt(token -> token
+                        .subject(BRIAN.id().toString()).claim("organization", List.of("mad")))))
+                .andExpect(status().isBadRequest());
+        denied(call(THIKA, get(sells).header("X-Alensi-Tenant", "MAD")));
+
+        // Each insurer sees only its own part of Brian.
+        call(JUB_ADMIN, get("/api/users/brian/grants")).andExpect(jsonPath("$[*].tenant").value(contains("JUB")));
+        call(MAD_ADMIN, get("/api/users/brian/grants")).andExpect(jsonPath("$[*].tenant").value(contains("MAD")));
+
+        // Jubilee suspending Brian leaves his Madison work untouched.
+        ok(send(JUB_ADMIN, put("/api/tenants/JUB/members/brian"), suspend()));
+        call(BRIAN, get(sells).header("X-Alensi-Tenant", "MAD")).andExpect(jsonPath("$").value(contains("MAD-KE-CST-MSA")));
+        denied(call(BRIAN, get(sells).header("X-Alensi-Tenant", "JUB")));
+        call(BRIAN, get(sells)).andExpect(jsonPath("$").value(contains("MAD-KE-CST-MSA"))); // only active tenant
+        ok(send(JUB_ADMIN, put("/api/tenants/JUB/members/brian"), """
+                {"status": "ACTIVE"}"""));
+    }
+
+    @Test
+    void tenantAdministrationStaysInsideTheTenant() throws Exception {
+        call(MAD_ADMIN, get("/api/tenants")).andExpect(jsonPath("$[*].code").value(contains("MAD")));
+        call(JUB_ADMIN, get("/api/tenants/JUB/members")).andExpect(jsonPath("$[?(@.username == 'mary')]").isNotEmpty());
+        denied(call(MARY, get("/api/tenants/JUB/members")));            // branch admin is not a tenant admin
+        denied(call(MAD_ADMIN, get("/api/tenants/JUB/members")));
+        call(JUB_ADMIN, get("/api/tenants/JUB/audit-events?size=500"))
+                .andExpect(jsonPath("$[?(@.action == 'tenant.created')]").isNotEmpty())
+                .andExpect(jsonPath("$[?(@.subject == 'musa')]").isEmpty());
+        denied(call(MAD_ADMIN, get("/api/tenants/JUB/audit-events")));
     }
 
     @Test
@@ -249,22 +374,23 @@ class MultiInsurerAccessIntegrationTest {
     @Test
     void insurersDefineTheirOwnRolesWithTheSameCode() throws Exception {
         ok(send(JUB_ADMIN, post("/api/applications/alensi-insure/roles"), """
-                {"code": "senior-agent", "name": "Senior agent", "owner": "JUB",
+                {"code": "senior-agent", "name": "Senior agent", "tenant": "JUB",
                  "permissions": ["policies.view", "policies.sell", "team.reports"]}"""));
         ok(send(MAD_ADMIN, post("/api/applications/alensi-insure/roles"), """
-                {"code": "senior-agent", "name": "Senior sales executive", "owner": "MAD",
+                {"code": "senior-agent", "name": "Senior sales executive", "tenant": "MAD",
                  "permissions": ["policies.view", "policies.sell"]}"""));
 
         // Each admin sees platform roles plus their own company's, never the other's.
         call(MAD_ADMIN, get("/api/applications/alensi-insure/roles"))
-                .andExpect(jsonPath("$[?(@.code == 'senior-agent')].owner").value(contains("MAD")));
-        call(JUB_ADMIN, get("/api/targets")).andExpect(jsonPath("$[?(@.company == 'MAD')]").isEmpty());
+                .andExpect(jsonPath("$[?(@.code == 'senior-agent')].tenant").value(contains("MAD")));
+        call(JUB_ADMIN, get("/api/targets")).andExpect(jsonPath("$[?(@.tenant == 'MAD')]").isEmpty());
 
-        // The role code resolves to the target's company's role. Jubilee's admin promotes Ann; Madison's resolves its own.
-        ok(send(JUB_ADMIN, post("/api/users/ann/grants"), grantBody("alensi-insure", "senior-agent", "JUB-KE-NRB-NWS-T1")));
-        call(JUB_ADMIN, get("/api/users/ann/grants"))
-                .andExpect(jsonPath("$[?(@.role == 'senior-agent')].roleOwner").value(contains("JUB")));
-        allowed(ANN, "me", "team.reports", "JUB-KE-NRB-NWS-T1", true);
+        // The role code resolves to the target's tenant's role. Jubilee's admin promotes Sam; Madison's resolves its own.
+        grant(TINA, SAM, "alensi-insure", "agent", "JUB-KE-NRB-NWS-T1");
+        ok(send(JUB_ADMIN, post("/api/users/sam/grants"), grantBody("alensi-insure", "senior-agent", "JUB-KE-NRB-NWS-T1")));
+        call(JUB_ADMIN, get("/api/users/sam/applications/alensi-insure/permissions/team.reports/targets/JUB-KE-NRB-NWS-T1"))
+                .andExpect(jsonPath("$.allowed").value(true));
+        allowed(SAM, "me", "team.reports", "JUB-KE-NRB-NWS-T1", true);
         ok(send(MAD_ADMIN, post("/api/users/musa/grants"), grantBody("alensi-insure", "senior-agent", "MAD-KE-CST-MSA")));
         allowed(MOMBASA, "me", "team.reports", "MAD-KE-CST-MSA", false);
     }
@@ -275,23 +401,23 @@ class MultiInsurerAccessIntegrationTest {
         denied(send(JUB_ADMIN, post("/api/applications/alensi-insure/roles"), """
                 {"code": "jub-global", "name": "x", "permissions": ["claims.view"]}"""));
         send(JUB_ADMIN, post("/api/applications/alensi-identity/roles"), """
-                {"code": "jub-super", "name": "x", "owner": "JUB", "permissions": ["identity.platform.manage"]}""")
+                {"code": "jub-super", "name": "x", "tenant": "JUB", "permissions": ["identity.platform.manage"]}""")
                 .andExpect(status().isBadRequest());
         // No shadowing of platform roles, no roles for another company, no limits on platform roles.
         send(JUB_ADMIN, post("/api/applications/alensi-insure/roles"), """
-                {"code": "branch-manager", "name": "x", "owner": "JUB", "permissions": ["claims.view"]}""")
+                {"code": "branch-manager", "name": "x", "tenant": "JUB", "permissions": ["claims.view"]}""")
                 .andExpect(status().isConflict());
         denied(send(JUB_ADMIN, post("/api/applications/alensi-insure/roles"), """
-                {"code": "mad-thing", "name": "x", "owner": "MAD", "permissions": ["claims.view"]}"""));
+                {"code": "mad-thing", "name": "x", "tenant": "MAD", "permissions": ["claims.view"]}"""));
         denied(send(JUB_ADMIN, put("/api/applications/alensi-insure/roles/branch-manager/limits"), """
                 {"limits": [{"permission": "claims.approve", "currency": "KES", "maxAmount": null}]}"""));
         // A company's own roles can only be granted inside the company, and only by its admins.
         ok(send(JUB_ADMIN, post("/api/applications/alensi-insure/roles"), """
-                {"code": "jub-auditor", "name": "Auditor", "owner": "JUB", "permissions": ["claims.view"]}"""));
+                {"code": "jub-auditor", "name": "Auditor", "tenant": "JUB", "permissions": ["claims.view"]}"""));
         send(MAD_ADMIN, post("/api/users/musa/grants"), grantBody("alensi-insure", "jub-auditor", "MAD-KE-CST-MSA"))
                 .andExpect(status().isNotFound());
         denied(send(CENTRAL, post("/api/users/tom/grants"), grantBody("alensi-insure", "jub-auditor", "JUB-KE-CEN-THK")));
-        send(MAD_ADMIN, put("/api/applications/alensi-insure/roles/jub-auditor/assignable-roles?owner=JUB"), """
+        send(MAD_ADMIN, put("/api/applications/alensi-insure/roles/jub-auditor/assignable-roles?tenant=JUB"), """
                 {"roles": []}""").andExpect(status().isForbidden());
     }
 
@@ -322,22 +448,27 @@ class MultiInsurerAccessIntegrationTest {
     @Test
     void insurersSetTheirOwnLimits() throws Exception {
         ok(send(JUB_ADMIN, post("/api/applications/alensi-insure/roles"), """
-                {"code": "claims-officer", "name": "Claims officer", "owner": "JUB",
+                {"code": "claims-officer", "name": "Claims officer", "tenant": "JUB",
                  "permissions": ["claims.view", "claims.approve"],
                  "limits": [{"permission": "claims.approve", "currency": "KES", "maxAmount": 250000}]}"""));
         ok(send(JUB_ADMIN, post("/api/users/carol/grants"), grantBody("alensi-insure", "claims-officer", "JUB-KE-CEN")));
         String check = "/api/users/me/applications/alensi-insure/permissions/claims.approve/targets/JUB-KE-CEN-THK?amount=300000&currency=KES";
         call(CENTRAL, get(check)).andExpect(jsonPath("$.allowed").value(false));
-        ok(send(JUB_ADMIN, put("/api/applications/alensi-insure/roles/claims-officer/limits?owner=JUB"), """
+        ok(send(JUB_ADMIN, put("/api/applications/alensi-insure/roles/claims-officer/limits?tenant=JUB"), """
                 {"limits": [{"permission": "claims.approve", "currency": "KES", "maxAmount": 500000}]}"""));
         call(CENTRAL, get(check)).andExpect(jsonPath("$.allowed").value(true));
-        send(JUB_ADMIN, put("/api/applications/alensi-insure/roles/claims-officer/limits?owner=JUB"), """
+        send(JUB_ADMIN, put("/api/applications/alensi-insure/roles/claims-officer/limits?tenant=JUB"), """
                 {"limits": [{"permission": "claims.view", "currency": "KES", "maxAmount": 1}]}""")
                 .andExpect(status().isBadRequest());
     }
 
-    private void limits(KeycloakUser actor, String role, String owner, String limitJson) throws Exception {
-        send(actor, put("/api/applications/alensi-insure/roles/%s/limits%s".formatted(role, owner == null ? "" : "?owner=" + owner)),
+    private void tenantType(String code, String parent) throws Exception {
+        ok(send(JUB_ADMIN, post("/api/target-types"),
+                "{\"code\": \"%s\", \"name\": \"%s\", \"parent\": \"%s\", \"tenant\": \"JUB\"}".formatted(code, code, parent)));
+    }
+
+    private void limits(KeycloakUser actor, String role, String tenant, String limitJson) throws Exception {
+        send(actor, put("/api/applications/alensi-insure/roles/%s/limits%s".formatted(role, tenant == null ? "" : "?tenant=" + tenant)),
                 "{\"limits\": [%s]}".formatted(limitJson)).andExpect(status().isOk());
     }
 

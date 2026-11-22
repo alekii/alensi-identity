@@ -50,7 +50,7 @@ public class AclCatalog {
     }
 
     public List<AclViews.TargetTypeView> targetTypes() {
-        return targetTypes.findAll(Sort.by("code")).stream().map(AclViews.TargetTypeView::of).toList();
+        return targetTypes.findAllWithParentAndTenant().stream().map(AclViews.TargetTypeView::of).toList();
     }
 
     public List<AclViews.TargetView> targets() {
