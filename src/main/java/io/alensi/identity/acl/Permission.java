@@ -27,13 +27,17 @@ public class Permission {
 
     private String description;
 
+    /** Limited permissions carry a monetary limit per role and currency, e.g. {@code claims.approve}. */
+    private boolean limited;
+
     protected Permission() {
     }
 
-    public Permission(Application application, String code, String description) {
+    public Permission(Application application, String code, String description, boolean limited) {
         this.application = application;
         this.code = code;
         this.description = description;
+        this.limited = limited;
     }
 
     public Long getId() {
@@ -50,5 +54,9 @@ public class Permission {
 
     public String getDescription() {
         return description;
+    }
+
+    public boolean isLimited() {
+        return limited;
     }
 }

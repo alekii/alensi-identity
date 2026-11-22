@@ -8,10 +8,18 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface RoleRepository extends JpaRepository<Role, Long> {
 
-    @EntityGraph(attributePaths = { "permissions", "assignableRoles", "assignableRoles.application" })
+    @EntityGraph(attributePaths = { "permissions", "owner", "limits", "assignableRoles", "assignableRoles.application",
+            "assignableRoles.owner" })
     List<Role> findByApplicationOrderByCode(Application application);
 
-    Optional<Role> findByApplicationAndCode(Application application, String code);
+    Optional<Role> findByApplicationAndCodeAndOwnerIsNull(Application application, String code);
 
+    Optional<Role> findByApplicationAndCodeAndOwner(Application application, String code, Target owner);
+
+    /** True if any role, platform-wide or company-owned, uses the code. */
     boolean existsByApplicationAndCode(Application application, String code);
+
+    boolean existsByApplicationAndCodeAndOwnerIsNull(Application application, String code);
+
+    boolean existsByApplicationAndCodeAndOwner(Application application, String code, Target owner);
 }

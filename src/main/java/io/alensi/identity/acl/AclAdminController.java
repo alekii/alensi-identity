@@ -1,5 +1,6 @@
 package io.alensi.identity.acl;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Set;
 
@@ -11,6 +12,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -20,6 +22,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -72,27 +75,37 @@ class AclAdminController {
     AclViews.PermissionView createPermission(UserAccount caller, @PathVariable String application,
             @Valid @RequestBody NewPermission body) {
         access.requirePlatform(caller);
-        return admin.createPermission(caller, application, body.code(), body.description());
+        return admin.createPermission(caller, application, body.code(), body.description(), body.limited());
     }
 
     @GetMapping("/applications/{application}/roles")
     List<AclViews.RoleView> roles(UserAccount caller, @PathVariable String application) {
-        return catalog.roles(application);
+        Set<String> companies = access.visibleCompanies(caller);
+        return catalog.roles(application).stream()
+                .filter(role -> role.owner() == null || companies == null || companies.contains(role.owner()))
+                .toList();
     }
 
     @PostMapping("/applications/{application}/roles")
     @ResponseStatus(HttpStatus.CREATED)
     AclViews.RoleView createRole(UserAccount caller, @PathVariable String application,
             @Valid @RequestBody NewRole body) {
-        access.requirePlatform(caller);
-        return admin.createRole(caller, application, body.code(), body.name(), body.permissions());
+        return admin.createRole(caller, application, body.code(), body.name(), body.permissions(), body.owner(),
+                limits(body.limits()));
     }
 
+    /** {@code owner} selects a company-owned role; omit it for platform-wide roles. */
     @PutMapping("/applications/{application}/roles/{role}/assignable-roles")
     AclViews.RoleView setAssignableRoles(UserAccount caller, @PathVariable String application,
-            @PathVariable String role, @Valid @RequestBody AssignableRoles body) {
-        access.requirePlatform(caller);
-        return admin.setAssignableRoles(caller, application, role, body.roles());
+            @PathVariable String role, @RequestParam(required = false) String owner,
+            @Valid @RequestBody AssignableRoles body) {
+        return admin.setAssignableRoles(caller, application, role, owner, body.roles());
+    }
+
+    @PutMapping("/applications/{application}/roles/{role}/limits")
+    AclViews.RoleView setLimits(UserAccount caller, @PathVariable String application, @PathVariable String role,
+            @RequestParam(required = false) String owner, @Valid @RequestBody Limits body) {
+        return admin.setLimits(caller, application, role, owner, limits(body.limits()));
     }
 
     @GetMapping("/target-types")
@@ -109,7 +122,10 @@ class AclAdminController {
 
     @GetMapping("/targets")
     List<AclViews.TargetView> targets(UserAccount caller) {
-        return catalog.targets();
+        Set<String> companies = access.visibleCompanies(caller);
+        return catalog.targets().stream()
+                .filter(target -> companies == null || companies.contains(target.company()))
+                .toList();
     }
 
     @PostMapping("/targets")
@@ -146,11 +162,27 @@ class AclAdminController {
             @NotBlank @Size(max = 255) String name, String description) {
     }
 
-    record NewPermission(@NotBlank @Size(max = 128) @Pattern(regexp = CODE) String code, String description) {
+    /** {@code limited} permissions (e.g. claims.approve) carry monetary limits per role and currency. */
+    record NewPermission(@NotBlank @Size(max = 128) @Pattern(regexp = CODE) String code, String description,
+            Boolean limited) {
+
+        NewPermission {
+            limited = Boolean.TRUE.equals(limited);
+        }
     }
 
+    /** {@code owner} makes the role private to a company (top-level target); omit for platform-wide roles. */
     record NewRole(@NotBlank @Size(max = 64) @Pattern(regexp = CODE) String code,
-            @NotBlank @Size(max = 255) String name, @NotEmpty Set<@NotBlank String> permissions) {
+            @NotBlank @Size(max = 255) String name, @NotEmpty Set<@NotBlank String> permissions, String owner,
+            List<@Valid LimitBody> limits) {
+    }
+
+    record Limits(@NotNull List<@Valid LimitBody> limits) {
+    }
+
+    /** {@code maxAmount} omitted or null means unlimited. */
+    record LimitBody(@NotBlank String permission, @NotBlank @Pattern(regexp = "^[A-Z]{3}$") String currency,
+            @PositiveOrZero BigDecimal maxAmount) {
     }
 
     record NewTargetType(@NotBlank @Size(max = 64) @Pattern(regexp = CODE) String code,
@@ -159,6 +191,12 @@ class AclAdminController {
 
     record NewTarget(@NotBlank @Size(max = 64) @Pattern(regexp = CODE) String code,
             @NotBlank @Size(max = 255) String name, @NotBlank String type, String parent) {
+    }
+
+    private static List<AclAdminService.LimitSpec> limits(List<LimitBody> limits) {
+        return limits == null ? List.of() : limits.stream()
+                .map(limit -> new AclAdminService.LimitSpec(limit.permission(), limit.currency(), limit.maxAmount()))
+                .toList();
     }
 
     record AssignableRoles(@NotNull List<@Valid RoleRef> roles) {

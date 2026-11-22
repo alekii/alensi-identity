@@ -51,7 +51,7 @@ The service authorizes its own API with the same model, through the seeded `alen
 | Role | Typically granted on | Can |
 |---|---|---|
 | `platform-admin` | `*` | Everything, including the catalog (applications, permissions, roles, target types), top-level targets, `*` grants and the audit log |
-| `company-admin` | a company | Create targets in the company, and assign its assignable roles inside it |
+| `company-admin` | a company | Create targets in the company; create, configure and assign the company's own roles; assign its assignable roles inside the company |
 | `regional-admin` | a region | The same, inside the region |
 | `branch-admin` | a branch | The same, inside the branch |
 | `service` | `*` | Read any user's profile and permissions (backend services checking permissions for a user) |
@@ -61,6 +61,8 @@ Admin rules:
 - Nobody changes their own access.
 - Suspending a user requires scope over every grant that user holds.
 - Reading another user's access is clipped to the caller's scope.
+
+Roles can be **platform-wide** or **owned by a company** (a top-level target). Company roles are granted only inside their company and are managed by holders of `identity.roles.manage`, so each insurer defines its own ranks without seeing others'. Permissions flagged `limited` (e.g. `claims.approve`) carry a **limit per role and currency**. A user's limit on a target is the highest among their covering grants, and no limit means no authority.
 
 Platform admins can add further admin levels, e.g. `team-admin`. See [docs/access-model-insurance.md](docs/access-model-insurance.md) for the alensi-insure model. Usernames listed in `alensi.identity.bootstrap-admins` get `platform-admin` on `*` the first time they are seen.
 
@@ -75,11 +77,13 @@ Platform admins can add further admin levels, e.g. `team-admin`. See [docs/acces
 | PUT | `/api/users/username/{username}/access` | Suspend, reactivate or set expiry (scope over all of the user's grants) |
 | GET | `/api/users/{user}/applications/{app}/permissions?targetCode=&targetType=&compressed=` | Permission map `type -> target -> [permissions]` |
 | GET | `/api/users/{user}/applications/{app}/permissions/{permission}` | `{"allowed": bool}` on any target |
-| GET | `/api/users/{user}/applications/{app}/permissions/{permission}/targets/{target}` | `{"allowed": bool}` on a target (inherits from ancestors) |
+| GET | `/api/users/{user}/applications/{app}/permissions/{permission}/targets/{target}?amount=&currency=` | `{"allowed": bool, "limits": [...]}` on a target (inherits from ancestors; limits only for limited permissions) |
 | GET | `/api/users/{user}/applications/{app}/permissions/{permission}/targets?compressed=` | Target codes, or `["*"]` |
 | GET | `/api/users/{user}/applications/{app}/targets?targetType=` | Targets the user has any grant on |
-| GET/POST | `/api/applications`, `/api/applications/{app}/permissions`, `/api/applications/{app}/roles` | Catalog (writes are platform-only) |
-| PUT | `/api/applications/{app}/roles/{role}/assignable-roles` | Set which roles an admin role may assign (platform-only) |
+| GET/POST | `/api/applications`, `/api/applications/{app}/permissions` | Catalog (writes are platform-only) |
+| GET/POST | `/api/applications/{app}/roles` | Roles; `owner` creates a company role (`identity.roles.manage` on the company) |
+| PUT | `/api/applications/{app}/roles/{role}/assignable-roles?owner=` | Set which roles an admin role may assign |
+| PUT | `/api/applications/{app}/roles/{role}/limits?owner=` | Set a role's limits per limited permission and currency |
 | GET/POST | `/api/target-types`, `/api/targets` | Target hierarchy (types platform-only; targets need `identity.targets.manage` on the parent) |
 | GET/POST/DELETE | `/api/users/{username}/grants[/{id}]` | Grants (assignable roles, within scope) |
 | GET | `/api/audit-events` | Audit log of ACL changes (`identity.audit.read`) |

@@ -1,11 +1,16 @@
 package io.alensi.identity.user;
 
+import java.util.HashSet;
+import java.util.Set;
+
 import io.alensi.identity.acl.PermissionEvaluator;
 import io.alensi.identity.acl.PermissionService;
+import io.alensi.identity.acl.Role;
 import io.alensi.identity.acl.RoleGrant;
 import io.alensi.identity.acl.RoleGrantRepository;
 import io.alensi.identity.acl.Scope;
 import io.alensi.identity.acl.TargetNode;
+import io.alensi.identity.acl.TargetTree;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,9 +28,13 @@ public class AccessGuard {
     public static final String PLATFORM_MANAGE = "identity.platform.manage";
     public static final String USERS_MANAGE = "identity.users.manage";
     public static final String TARGETS_MANAGE = "identity.targets.manage";
+    public static final String ROLES_MANAGE = "identity.roles.manage";
     public static final String USERS_READ = "identity.users.read";
     public static final String PERMISSIONS_READ = "identity.permissions.read";
     public static final String AUDIT_READ = "identity.audit.read";
+
+    /** Permissions that only make sense on all targets; company-owned roles may never carry them. */
+    public static final Set<String> PLATFORM_ONLY = Set.of(PLATFORM_MANAGE, AUDIT_READ);
 
     private final PermissionService permissions;
     private final RoleGrantRepository grants;
@@ -69,14 +78,47 @@ public class AccessGuard {
     }
 
     /**
+     * Creating or configuring a role owned by {@code ownerCode} (a company); platform-wide roles
+     * ({@code ownerCode == null}) are platform-only.
+     */
+    public void requireRoleManagement(UserAccount caller, String ownerCode) {
+        PermissionEvaluator evaluator = evaluator(caller);
+        if (isPlatformAdmin(evaluator)) {
+            return;
+        }
+        if (ownerCode == null) {
+            throw new AccessDeniedException("Only platform administrators can manage platform-wide roles");
+        }
+        if (!evaluator.scope(ROLES_MANAGE).covers(evaluator.requireTarget(ownerCode))) {
+            throw new AccessDeniedException("Roles of '%s' are outside your scope".formatted(ownerCode));
+        }
+    }
+
+    /**
+     * The companies (top-level targets) whose private configuration the caller may see, or
+     * {@code null} for all of them.
+     */
+    public Set<String> visibleCompanies(UserAccount caller) {
+        TargetTree tree = permissions.targetTree();
+        Set<String> companies = new HashSet<>();
+        for (RoleGrant grant : grants.findForUser(caller)) {
+            if (grant.isWildcard()) {
+                return null;
+            }
+            tree.find(grant.getTarget().getCode()).ifPresent(node -> companies.add(tree.root(node).code()));
+        }
+        return companies;
+    }
+
+    /**
      * Granting or revoking {@code roleId} for {@code subject} on {@code targetCode} ({@code null} = all
      * targets). The role must be assignable by one of the caller's admin grants covering the target.
      */
-    public void requireCanAssign(UserAccount caller, UserAccount subject, long roleId, String targetCode) {
+    public void requireCanAssign(UserAccount caller, UserAccount subject, Role role, String targetCode) {
         requireNotSelf(caller, subject);
         PermissionEvaluator evaluator = evaluator(caller);
         TargetNode target = targetCode == null ? null : evaluator.requireTarget(targetCode);
-        if (!canAssign(evaluator, roleId, target)) {
+        if (!canAssign(evaluator, role, target)) {
             throw new AccessDeniedException("You may not assign or revoke this role on %s"
                     .formatted(targetCode == null ? "all targets" : "'" + targetCode + "'"));
         }
@@ -98,7 +140,7 @@ public class AccessGuard {
         }
         for (RoleGrant grant : subjectGrants) {
             TargetNode target = grant.isWildcard() ? null : evaluator.requireTarget(grant.getTarget().getCode());
-            if (!canAssign(evaluator, grant.getRole().getId(), target)) {
+            if (!canAssign(evaluator, grant.getRole(), target)) {
                 throw new AccessDeniedException("'%s' holds access outside your scope".formatted(subject.getUsername()));
             }
         }
@@ -126,8 +168,15 @@ public class AccessGuard {
         return scope;
     }
 
-    private boolean canAssign(PermissionEvaluator evaluator, long roleId, TargetNode target) {
-        return isPlatformAdmin(evaluator) || evaluator.canAssign(USERS_MANAGE, roleId, target);
+    /**
+     * Platform admins assign anything. Others need the role on the assignable list of an admin grant
+     * covering the target; holders of {@code identity.roles.manage} may also assign their company's own roles.
+     */
+    private boolean canAssign(PermissionEvaluator evaluator, Role role, TargetNode target) {
+        if (isPlatformAdmin(evaluator) || evaluator.canAssign(USERS_MANAGE, role.getId(), target)) {
+            return true;
+        }
+        return !role.isPlatformWide() && target != null && evaluator.scope(ROLES_MANAGE).covers(target);
     }
 
     private static boolean isPlatformAdmin(PermissionEvaluator evaluator) {

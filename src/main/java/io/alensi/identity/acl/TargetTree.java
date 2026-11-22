@@ -43,6 +43,12 @@ public final class TargetTree {
         return path;
     }
 
+    /** The top-level ancestor of the node (its company, in alensi-insure). */
+    public TargetNode root(TargetNode node) {
+        List<TargetNode> path = ancestorsOrSelf(node);
+        return path.get(path.size() - 1);
+    }
+
     /** The node and every node below it, breadth first. */
     public List<TargetNode> descendantsOrSelf(TargetNode node) {
         List<TargetNode> result = new ArrayList<>();

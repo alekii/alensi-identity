@@ -99,7 +99,44 @@ ordinary roles a platform admin creates in `alensi-identity` with `identity.user
 | `bancassurance-officer` | branch (or partner bank) | `policies.quote`, `customers.create` | — |
 | `auditor` | company | Read-only across everything, `audit.read` | — |
 
-Limits are illustrative; each insurer configures its own.
+Limits are illustrative; each insurer configures its own (see below).
+
+### Per-insurer roles
+
+Platform-wide roles (above) are the shared defaults. Each insurer can add **its own roles**,
+owned by its company target, e.g. Jubilee's `senior-agent` next to Madison's `senior-agent`:
+
+- Company roles are created and configured by holders of `identity.roles.manage` on the
+  company (`company-admin`). They can only be granted **inside that company**, and
+  company admins may assign them anywhere in their company.
+- The same code resolves per company. Granting `senior-agent` on a `JUB-…` target gives
+  Jubilee's role; on a `MAD-…` target, Madison's.
+- Company roles can't reuse a platform-wide role's code. They can't carry platform-only
+  permissions (`identity.platform.manage`, `identity.audit.read`), and they can only
+  assign platform-wide roles or their own company's roles.
+- Each insurer only sees platform roles, its own roles and its own targets.
+
+### Approval limits
+
+Permissions such as `claims.approve` are flagged **limited**. Each role carries a limit
+per currency for each limited permission:
+
+| Role (example) | `claims.approve` limit |
+|---|---|
+| `branch-manager` (platform default) | KES 1,000,000 |
+| `claims-officer` (Jubilee-owned) | KES 500,000 |
+| `head-of-claims` | KES unlimited |
+| `agent` | none, so no authority |
+
+- No limit for a currency means **no authority** in that currency (fail closed). An
+  explicit `maxAmount: null` means unlimited.
+- A user's effective limit on a target is the **highest** limit among their grants
+  covering that target.
+- Insure asks `GET /api/users/{user}/applications/alensi-insure/permissions/claims.approve/targets/{branch}?amount=3000000&currency=KES`.
+  The answer is `{"allowed": false, "limits": [{"currency": "KES", "maxAmount": 1000000}]}`,
+  which tells insure to route the claim up the chain.
+- Platform admins set limits on platform roles; company admins set limits on their own
+  company's roles.
 
 ### Agent ranks
 
@@ -170,11 +207,12 @@ audited business grant.
 | 1 | Admin permissions were checked "on any target", so scoped admins acted globally. | **Fixed** (V3, `AccessGuard`). Covered by `MultiInsurerAccessIntegrationTest`. |
 | 2 | Assignable roles per admin role; no self-grants. | **Done** |
 | 3 | Platform, company, regional and branch admin roles; company targets and `team` level. | **Done** |
-| 4 | No approval limits on roles. | Missing |
+| 4 | Approval limits on roles, per currency. | **Done** (V4) |
 | 5 | Grants have no `valid_from` / `valid_until` (acting cover during leave). | Missing |
 | 6 | Admins can't onboard staff (create the Keycloak user and send the invite). | Missing |
 | 7 | No "list users in my scope" endpoint for managers. | Missing |
-| 9 | Roles and approval limits are shared by all insurers. Jubilee and Madison can't yet define different ranks or limits. | Missing (company-specific roles) |
+| 9 | Per-insurer roles and limits. | **Done** (V4) |
+| 11 | Platform-wide admin roles' assignable lists are shared. A company that wants its regional admins to assign its own roles creates a company-owned admin role (e.g. a Jubilee regional admin) instead. | By design |
 | 10 | The audit log is platform-only; company admins can't yet see their own company's audit trail. | Missing |
 | 8 | Customers and policyholders logging in need ownership-based access (their own policies). That belongs in insure, but customer accounts need a separate Keycloak realm or group so they never receive staff roles. | Design decision |
 
